@@ -56,9 +56,10 @@ flowchart TD
     end
 
     RAW --> S1
-    S4 --> ICE_DQ[("ตาราง Iceberg\nnyc_taxi_db.dq_audit_log")]
-    S7 --> ICE_CUR[("ตาราง Iceberg\nnyc_taxi_db.curated_daily_trips")]
-    S8 --> MART["ผลลัพธ์สุดท้ายและไฟล์หลักฐาน\nevidence/final_most_used_2024h1.csv"]
+    S4 -->|"Athena เขียนลง S3"| ICE_DQ[("ตาราง Iceberg บน S3\nnyc_taxi_db.dq_audit_log")]
+    S7 -->|"Athena เขียนลง S3"| ICE_CUR[("ตาราง Iceberg บน S3\nnyc_taxi_db.curated_daily_trips")]
+    S8 -->|"Athena เขียน CSV ลง S3"| S3_MART["S3 Analytics Output\nanalytics/final_most_used/"]
+    S3_MART -->|"scripts/export_evidence.sh\naws s3 cp ดึงลงโปรเจกต์"| MART["ไฟล์หลักฐานใน GitHub\nevidence/final_most_used_2024h1.csv"]
 ```
 
 ### โครงสร้างไฟล์ใน Repository
