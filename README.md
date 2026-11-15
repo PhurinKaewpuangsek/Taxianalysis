@@ -37,7 +37,7 @@
 
 ```mermaid
 flowchart TD
-    CF["NYC TLC CloudFront\nไฟล์ Parquet 24 ไฟล์"] -->|"scripts/ingest_to_s3.sh\ncurl ส่งตรงเข้า S3 ไม่ผ่านดิสก์"| RAW["S3 Raw Zone\nraw/taxi_type/year_month=YYYY-MM/"]
+    CF["แหล่งข้อมูลสาธารณะ NYC TLC\nไฟล์ Parquet 24 ไฟล์"] -->|"scripts/ingest_to_s3.sh\ncurl ส่งตรงเข้า S3 ไม่ผ่านดิสก์"| RAW["S3 Raw Zone\nraw/taxi_type/year_month=YYYY-MM/"]
 
     subgraph SFN["AWS Step Functions: NycTaxiReproduciblePipeline"]
         S1["Step 1: RepairPartitionsParallel\nรัน MSCK REPAIR TABLE ทั้ง 4 ตารางดิบ"]
@@ -67,7 +67,7 @@ Taxianalysis/
 ├── template.yaml                      # CloudFormation สร้าง Glue Catalog และ Step Functions
 ├── scripts/
 │   ├── deploy_and_run.sh              # สคริปต์ติดตั้งและรัน Pipeline ทั้งระบบในคำสั่งเดียว
-│   ├── ingest_to_s3.sh                # สคริปต์สตรีมไฟล์ Parquet จาก CloudFront เข้า S3
+│   ├── ingest_to_s3.sh                # สคริปต์สตรีมไฟล์ Parquet จากเว็บ NYC TLC เข้า S3
 │   └── export_evidence.sh             # สคริปต์ดึงไฟล์หลักฐานการทำงานลงโฟลเดอร์ evidence
 ├── sql/
 │   ├── 01_ddl_iceberg_tables.sql      # คำสั่งสร้างตารางและลงทะเบียน Partition
@@ -183,7 +183,7 @@ chmod +x scripts/*.sh
 ### การตัดสินใจที่ 2 การใช้ตาราง Apache Iceberg ร่วมกับ Data Quality Gate บน Step Functions
 เพื่อให้ Pipeline รันซ้ำได้โดยไม่เกิดข้อมูลซ้ำซ้อน เราเลือกสร้างตาราง `dq_audit_log` และ `curated_daily_trips` เป็น Apache Iceberg ที่รองรับคำสั่ง `DELETE` ก่อนเริ่มคำนวณทุกครั้งระบบจะลบข้อมูลเฉพาะช่วงเดือนเป้าหมายเดิมออกก่อนเสมอ และคั่นกลางด้วยสถานะ `EvaluateDqGate` ใน Step Functions เพื่อตรวจสอบว่าข้อมูลทั้ง 24 ไฟล์ผ่านเกณฑ์คุณภาพครบทั้งหมดก่อนจึงจะบันทึกเข้าสู่ตาราง Curated
 
-### การตัดสินใจที่ 3 การสตรีมข้อมูลจาก CloudFront เข้า S3 โดยตรง
+### การตัดสินใจที่ 3 การสตรีมข้อมูลจากเว็บต้นทาง NYC TLC เข้า S3 โดยตรง
 เนื่องจากสภาพแวดล้อม AWS CloudShell จำกัดพื้นที่ดิสก์เพียง 1 GB ซึ่งไม่พอเก็บไฟล์ Parquet ขนาด 3.2 GB เราจึงออกแบบสคริปต์ `ingest_to_s3.sh` ให้ใช้ท่อคำสั่ง `curl | aws s3 cp -` เพื่อส่งข้อมูลจากต้นทางเข้า S3 โดยตรงโดยไม่เขียนลงดิสก์ และเช็คไฟล์ที่มีอยู่แล้วด้วย `head-object` เพื่อไม่ต้องอัปโหลดซ้ำในการรันครั้งถัดไป
 
 ---
