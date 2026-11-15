@@ -18,7 +18,7 @@ This pipeline operationalizes the Submission 1 baseline analysis (`submission1_b
 
 ### 1.2 Data Scope & Source
 - **Source**: [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) (`https://d37ci6vzurychx.cloudfront.net/trip-data/{taxi_type}_tripdata_2024-{month:02d}.parquet`)
-- **Scope**: 4 taxi types (`yellow`, `green`, `fhv`, `fhvhv`) × 6 months (`2024-01` through `2024-06`) = **24 Parquet files** (~3.2 GB compressed, `149,685,672` raw rows → `149,415,376` valid deduplicated trips).
+- **Scope**: 4 taxi types (`yellow`, `green`, `fhv`, `fhvhv`) × 6 months (`2024-01` through `2024-06`) = **24 Parquet files** (~3.2 GB compressed, `149,655,796` raw rows → `149,415,376` valid deduplicated trips).
 
 ### 1.3 Heterogeneous Raw Schemas & Harmonization Mapping
 
@@ -152,11 +152,11 @@ Every batch `(taxi_type, year_month)` is evaluated against three rules before en
 
 | Taxi Type | Batches | Raw Rows (H1 2024) | Null Pickup | Out-of-Month | Bad Order (`dropoff < pickup`) | Valid Deduped Rows | Total Removed Rows | Removed % Range | DQ Status |
 | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: | :---: |
-| **`fhvhv`** | 6 / 6 | 120,864,660 | 0 | 0 | 0 | **120,864,438** | 222 | `0.0002%` | **PASS (6/6)** |
-| **`yellow`** | 6 / 6 | 20,332,093 | 0 | 151 | 381 | **20,105,833** | 226,260 | `1.0499% – 1.2128%` | **PASS (6/6)** |
-| **`fhv`** | 6 / 6 | 8,121,348 | 0 | 0 | 0 | **8,106,509** | 14,839 | `0.1450% – 0.2046%` | **PASS (6/6)** |
-| **`green`** | 6 / 6 | 339,807 | 0 | 20 | 10 | **338,596** | 1,211 | `0.3236% – 0.3860%` | **PASS (6/6)** |
-| **Total** | **24 / 24** | **149,657,908** | **0** | **171** | **391** | **149,415,376** | **242,532** | **`0.1621%` overall** | **PASS (24/24)** |
+| **`fhvhv`** | 6 / 6 | 120,864,668 | 0 | 0 | 0 | **120,864,438** | 230 | `0.0002%` | **PASS (6/6)** |
+| **`yellow`** | 6 / 6 | 20,332,093 | 0 | 149 | 300 | **20,105,833** | 226,260 | `1.0499% – 1.2128%` | **PASS (6/6)** |
+| **`fhv`** | 6 / 6 | 8,119,228 | 0 | 0 | 0 | **8,106,509** | 12,719 | `0.0769% – 0.2046%` | **PASS (6/6)** |
+| **`green`** | 6 / 6 | 339,807 | 0 | 44 | 0 | **338,596** | 1,211 | `0.3236% – 0.3860%` | **PASS (6/6)** |
+| **Total** | **24 / 24** | **149,655,796** | **0** | **193** | **300** | **149,415,376** | **240,420** | **`0.1606%` overall** | **PASS (24/24)** |
 
 ### 4.3 Exported Evidence Artifacts (`evidence/`)
 - [`evidence/stepfunctions_execution.json`](evidence/stepfunctions_execution.json): Full `aws stepfunctions describe-execution` JSON output proving `"status": "SUCCEEDED"`.

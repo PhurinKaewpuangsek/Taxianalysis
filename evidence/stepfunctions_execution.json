@@ -1,15 +1,19 @@
 {
-  "executionArn": "arn:aws:states:us-east-1:learner-lab:execution:NycTaxiReproduciblePipeline:nyc-taxi-h1-2024-baseline",
-  "stateMachineArn": "arn:aws:states:us-east-1:learner-lab:stateMachine:NycTaxiReproduciblePipeline",
-  "name": "nyc-taxi-h1-2024-baseline",
-  "status": "SUCCEEDED",
-  "startDate": "2026-11-15T07:44:10.124000+00:00",
-  "stopDate": "2026-11-15T07:46:42.891000+00:00",
-  "input": "{\"year\":\"2024\",\"target_window\":\"2024-01..2024-06\"}",
-  "inputDetails": {
-    "included": true
-  },
-  "outputDetails": {
-    "included": true
-  }
+    "executionArn": "arn:aws:states:us-east-1:311651746847:execution:NycTaxiReproduciblePipeline:nyc-taxi-h1-2024-20261115-172638",
+    "stateMachineArn": "arn:aws:states:us-east-1:311651746847:stateMachine:NycTaxiReproduciblePipeline",
+    "name": "nyc-taxi-h1-2024-20261115-172638",
+    "status": "SUCCEEDED",
+    "startDate": "2026-11-15T17:26:42.029000+07:00",
+    "stopDate": "2026-11-15T17:33:42.039000+07:00",
+    "input": "{\"year\":\"2024\",\"target_window\":\"2024-01..2024-06\"}",
+    "inputDetails": {
+        "included": true
+    },
+    "output": "{\"QueryExecution\":{\"EngineVersion\":{\"EffectiveEngineVersion\":\"Athena engine version 3\",\"SelectedEngineVersion\":\"AUTO\"},\"Query\":\"SELECT RANK() OVER (ORDER BY SUM(valid_trip_count) DESC) AS usage_rank, taxi_type, SUM(CASE WHEN year_month = '2024-01' THEN valid_trip_count ELSE 0 END) AS jan_2024, SUM(CASE WHEN year_month = '2024-02' THEN valid_trip_count ELSE 0 END) AS feb_2024, SUM(CASE WHEN year_month = '2024-03' THEN valid_trip_count ELSE 0 END) AS mar_2024, SUM(CASE WHEN year_month = '2024-04' THEN valid_trip_count ELSE 0 END) AS apr_2024, SUM(CASE WHEN year_month = '2024-05' THEN valid_trip_count ELSE 0 END) AS may_2024, SUM(CASE WHEN year_month = '2024-06' THEN valid_trip_count ELSE 0 END) AS jun_2024, SUM(valid_trip_count) AS total_h1_2024_valid_trips, CAST(ROUND(CAST(SUM(valid_trip_count) AS DOUBLE) / NULLIF(COUNT(DISTINCT pickup_date), 0), 0) AS BIGINT) AS avg_daily_trips_h1, ROUND(CAST(SUM(valid_trip_count) AS DOUBLE) * 100.0 / SUM(SUM(valid_trip_count)) OVER (), 2) AS share_of_total_trips_pct FROM nyc_taxi_db.curated_daily_trips WHERE year_month BETWEEN '2024-01' AND '2024-06' GROUP BY taxi_type ORDER BY total_h1_2024_valid_trips DESC\",\"QueryExecutionContext\":{\"Database\":\"nyc_taxi_db\"},\"QueryExecutionId\":\"974badc5-395b-421b-83f2-8f5399939153\",\"ResultConfiguration\":{\"OutputLocation\":\"s3://nyc-taxi-pipeline-311651746847/analytics/final_most_used/974badc5-395b-421b-83f2-8f5399939153.csv\"},\"ResultReuseConfiguration\":{\"ResultReuseByAgeConfiguration\":{\"Enabled\":false}},\"StatementType\":\"DML\",\"Statistics\":{\"DataScannedInBytes\":7964,\"EngineExecutionTimeInMillis\":1777,\"QueryPlanningTimeInMillis\":490,\"QueryQueueTimeInMillis\":93,\"ResultReuseInformation\":{\"ReusedPreviousResult\":false},\"ServicePreProcessingTimeInMillis\":70,\"ServiceProcessingTimeInMillis\":29,\"TotalExecutionTimeInMillis\":1969},\"Status\":{\"CompletionDateTime\":1794738762825,\"State\":\"SUCCEEDED\",\"SubmissionDateTime\":1794738760856},\"SubstatementType\":\"SELECT\",\"WorkGroup\":\"primary\"}}",
+    "outputDetails": {
+        "included": true
+    },
+    "redriveCount": 0,
+    "redriveStatus": "NOT_REDRIVABLE",
+    "redriveStatusReason": "Execution is SUCCEEDED and cannot be redriven"
 }
