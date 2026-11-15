@@ -1,0 +1,10 @@
+# Local reference docs / prompts (not part of the pipeline deliverable)
+_local_reference/
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.vscode/
+.idea/

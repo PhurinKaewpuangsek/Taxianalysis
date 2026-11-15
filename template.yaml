@@ -1,0 +1,578 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Submission 2 - Reproducible Data Pipeline for NYC Taxi 2024 H1 (AWS Academy Learner Lab).
+  Provisions Glue Catalog Database, 4 Harmonized Raw External Parquet Tables (yellow, green, fhv, fhvhv),
+  and an AWS Step Functions State Machine orchestrating Apache Iceberg Curated & Data Quality Audit tables via Athena.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: S3 Bucket name storing raw Parquet files, Iceberg tables, and Athena outputs.
+  LabRoleArn:
+    Type: String
+    Description: Existing AWS Academy Learner Lab IAM Role ARN (arn:aws:iam::<ACCOUNT_ID>:role/LabRole).
+  DatabaseName:
+    Type: String
+    Default: nyc_taxi_db
+    Description: AWS Glue Data Catalog database name.
+
+Resources:
+  NycTaxiGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref DatabaseName
+        Description: NYC Taxi 2024 H1 Lakehouse Database (Raw Parquet + Apache Iceberg Curated & Audit Tables)
+        LocationUri: !Sub s3://${BucketName}/
+
+  RawYellowTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref NycTaxiGlueDatabase
+      TableInput:
+        Name: raw_yellow
+        Description: Raw Yellow Taxi Trip Records partitioned by year_month
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          EXTERNAL: 'TRUE'
+          classification: parquet
+          parquet.column.index.access: 'false'
+        PartitionKeys:
+          - Name: year_month
+            Type: string
+        StorageDescriptor:
+          Location: !Sub s3://${BucketName}/raw/yellow/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+            Parameters:
+              serialization.format: '1'
+              parquet.column.index.access: 'false'
+          Columns:
+            - Name: vendorid
+              Type: bigint
+            - Name: tpep_pickup_datetime
+              Type: timestamp
+            - Name: tpep_dropoff_datetime
+              Type: timestamp
+            - Name: passenger_count
+              Type: bigint
+            - Name: trip_distance
+              Type: double
+            - Name: ratecodeid
+              Type: bigint
+            - Name: store_and_fwd_flag
+              Type: string
+            - Name: pulocationid
+              Type: bigint
+            - Name: dolocationid
+              Type: bigint
+            - Name: payment_type
+              Type: bigint
+            - Name: fare_amount
+              Type: double
+            - Name: extra
+              Type: double
+            - Name: mta_tax
+              Type: double
+            - Name: tip_amount
+              Type: double
+            - Name: tolls_amount
+              Type: double
+            - Name: improvement_surcharge
+              Type: double
+            - Name: total_amount
+              Type: double
+            - Name: congestion_surcharge
+              Type: double
+            - Name: airport_fee
+              Type: double
+
+  RawGreenTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref NycTaxiGlueDatabase
+      TableInput:
+        Name: raw_green
+        Description: Raw Green Taxi Trip Records partitioned by year_month
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          EXTERNAL: 'TRUE'
+          classification: parquet
+          parquet.column.index.access: 'false'
+        PartitionKeys:
+          - Name: year_month
+            Type: string
+        StorageDescriptor:
+          Location: !Sub s3://${BucketName}/raw/green/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+            Parameters:
+              serialization.format: '1'
+              parquet.column.index.access: 'false'
+          Columns:
+            - Name: vendorid
+              Type: bigint
+            - Name: lpep_pickup_datetime
+              Type: timestamp
+            - Name: lpep_dropoff_datetime
+              Type: timestamp
+            - Name: store_and_fwd_flag
+              Type: string
+            - Name: ratecodeid
+              Type: bigint
+            - Name: pulocationid
+              Type: bigint
+            - Name: dolocationid
+              Type: bigint
+            - Name: passenger_count
+              Type: bigint
+            - Name: trip_distance
+              Type: double
+            - Name: fare_amount
+              Type: double
+            - Name: extra
+              Type: double
+            - Name: mta_tax
+              Type: double
+            - Name: tip_amount
+              Type: double
+            - Name: tolls_amount
+              Type: double
+            - Name: ehail_fee
+              Type: double
+            - Name: improvement_surcharge
+              Type: double
+            - Name: total_amount
+              Type: double
+            - Name: payment_type
+              Type: bigint
+            - Name: trip_type
+              Type: bigint
+            - Name: congestion_surcharge
+              Type: double
+
+  RawFhvTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref NycTaxiGlueDatabase
+      TableInput:
+        Name: raw_fhv
+        Description: Raw For-Hire Vehicle (FHV) Trip Records partitioned by year_month
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          EXTERNAL: 'TRUE'
+          classification: parquet
+          parquet.column.index.access: 'false'
+        PartitionKeys:
+          - Name: year_month
+            Type: string
+        StorageDescriptor:
+          Location: !Sub s3://${BucketName}/raw/fhv/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+            Parameters:
+              serialization.format: '1'
+              parquet.column.index.access: 'false'
+          Columns:
+            - Name: dispatching_base_num
+              Type: string
+            - Name: pickup_datetime
+              Type: timestamp
+            - Name: dropoff_datetime
+              Type: timestamp
+            - Name: pulocationid
+              Type: bigint
+            - Name: dolocationid
+              Type: bigint
+            - Name: sr_flag
+              Type: bigint
+            - Name: affiliated_base_number
+              Type: string
+
+  RawFhvhvTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref NycTaxiGlueDatabase
+      TableInput:
+        Name: raw_fhvhv
+        Description: Raw High-Volume For-Hire Vehicle (FHVHV) Trip Records partitioned by year_month
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          EXTERNAL: 'TRUE'
+          classification: parquet
+          parquet.column.index.access: 'false'
+        PartitionKeys:
+          - Name: year_month
+            Type: string
+        StorageDescriptor:
+          Location: !Sub s3://${BucketName}/raw/fhvhv/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+            Parameters:
+              serialization.format: '1'
+              parquet.column.index.access: 'false'
+          Columns:
+            - Name: hvfhs_license_num
+              Type: string
+            - Name: dispatching_base_num
+              Type: string
+            - Name: originating_base_num
+              Type: string
+            - Name: request_datetime
+              Type: timestamp
+            - Name: on_scene_datetime
+              Type: timestamp
+            - Name: pickup_datetime
+              Type: timestamp
+            - Name: dropoff_datetime
+              Type: timestamp
+            - Name: pulocationid
+              Type: bigint
+            - Name: dolocationid
+              Type: bigint
+            - Name: trip_miles
+              Type: double
+            - Name: trip_time
+              Type: bigint
+            - Name: base_passenger_fare
+              Type: double
+            - Name: tolls
+              Type: double
+            - Name: bcf
+              Type: double
+            - Name: sales_tax
+              Type: double
+            - Name: congestion_surcharge
+              Type: double
+            - Name: airport_fee
+              Type: double
+            - Name: tips
+              Type: double
+            - Name: driver_pay
+              Type: double
+            - Name: shared_request_flag
+              Type: string
+            - Name: shared_match_flag
+              Type: string
+            - Name: access_a_ride_flag
+              Type: string
+            - Name: wav_request_flag
+              Type: string
+            - Name: wav_match_flag
+              Type: string
+
+  NycTaxiStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    DependsOn:
+      - RawYellowTable
+      - RawGreenTable
+      - RawFhvTable
+      - RawFhvhvTable
+    Properties:
+      StateMachineName: NycTaxiReproduciblePipeline
+      RoleArn: !Ref LabRoleArn
+      DefinitionString: !Sub |
+        {
+          "Comment": "NYC Taxi 2024 H1 Reproducible Lakehouse Pipeline with Apache Iceberg & DQ Gate",
+          "StartAt": "RepairPartitionsParallel",
+          "States": {
+            "RepairPartitionsParallel": {
+              "Type": "Parallel",
+              "Comment": "Register S3 year_month partitions across all 4 raw Glue tables",
+              "ResultPath": null,
+              "Next": "EnsureCuratedAndAuditTablesExist",
+              "Branches": [
+                {
+                  "StartAt": "RepairYellowPartitions",
+                  "States": {
+                    "RepairYellowPartitions": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "MSCK REPAIR TABLE ${DatabaseName}.raw_yellow",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/repair/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "RepairGreenPartitions",
+                  "States": {
+                    "RepairGreenPartitions": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "MSCK REPAIR TABLE ${DatabaseName}.raw_green",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/repair/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "RepairFhvPartitions",
+                  "States": {
+                    "RepairFhvPartitions": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "MSCK REPAIR TABLE ${DatabaseName}.raw_fhv",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/repair/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "RepairFhvhvPartitions",
+                  "States": {
+                    "RepairFhvhvPartitions": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "MSCK REPAIR TABLE ${DatabaseName}.raw_fhvhv",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/repair/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                }
+              ]
+            },
+            "EnsureCuratedAndAuditTablesExist": {
+              "Type": "Parallel",
+              "Comment": "Create Apache Iceberg tables for DQ auditing and curated daily trips if not already present",
+              "ResultPath": null,
+              "Next": "DeleteExistingTargetWindowForIdempotency",
+              "Branches": [
+                {
+                  "StartAt": "CreateDqAuditIcebergTable",
+                  "States": {
+                    "CreateDqAuditIcebergTable": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "CREATE TABLE IF NOT EXISTS ${DatabaseName}.dq_audit_log (taxi_type string, year_month string, raw_count bigint, null_pickup_count bigint, out_of_month_count bigint, bad_order_count bigint, valid_deduped_count bigint, removed_count bigint, removed_pct double, dq_status string, processed_at timestamp) PARTITIONED BY (year_month) LOCATION 's3://${BucketName}/dq_audit/' TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet', 'write_compression' = 'snappy')",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/ddl/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "CreateCuratedDailyTripsIcebergTable",
+                  "States": {
+                    "CreateCuratedDailyTripsIcebergTable": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "CREATE TABLE IF NOT EXISTS ${DatabaseName}.curated_daily_trips (taxi_type string, year_month string, pickup_date date, valid_trip_count bigint, distinct_pu_zones bigint, distinct_do_zones bigint, updated_at timestamp) PARTITIONED BY (taxi_type, year_month) LOCATION 's3://${BucketName}/curated/daily_trips/' TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet', 'write_compression' = 'snappy')",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/ddl/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                }
+              ]
+            },
+            "DeleteExistingTargetWindowForIdempotency": {
+              "Type": "Parallel",
+              "Comment": "Idempotent delete of target window rows from both Iceberg tables before re-inserting",
+              "ResultPath": null,
+              "Next": "ComputeAndLogDataQualityMetrics",
+              "Branches": [
+                {
+                  "StartAt": "DeleteDqAuditTargetWindow",
+                  "States": {
+                    "DeleteDqAuditTargetWindow": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "DELETE FROM ${DatabaseName}.dq_audit_log WHERE year_month BETWEEN '2024-01' AND '2024-06'",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/idempotency/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "DeleteCuratedTargetWindow",
+                  "States": {
+                    "DeleteCuratedTargetWindow": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+                      "Parameters": {
+                        "QueryString": "DELETE FROM ${DatabaseName}.curated_daily_trips WHERE year_month BETWEEN '2024-01' AND '2024-06'",
+                        "QueryExecutionContext": {
+                          "Database": "${DatabaseName}"
+                        },
+                        "ResultConfiguration": {
+                          "OutputLocation": "s3://${BucketName}/athena-results/idempotency/"
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                }
+              ]
+            },
+            "ComputeAndLogDataQualityMetrics": {
+              "Type": "Task",
+              "Comment": "Harmonize all 4 schemas, apply 3 cleaning rules, and log 24 batch DQ rows",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString": "INSERT INTO ${DatabaseName}.dq_audit_log WITH harmonized AS (SELECT 'yellow' AS taxi_type, year_month, CAST(vendorid AS VARCHAR) AS provider_id, tpep_pickup_datetime AS pickup_dt, tpep_dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_yellow WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'green' AS taxi_type, year_month, CAST(vendorid AS VARCHAR) AS provider_id, lpep_pickup_datetime AS pickup_dt, lpep_dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_green WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'fhv' AS taxi_type, year_month, CAST(dispatching_base_num AS VARCHAR) AS provider_id, pickup_datetime AS pickup_dt, dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_fhv WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'fhvhv' AS taxi_type, year_month, CAST(hvfhs_license_num AS VARCHAR) AS provider_id, pickup_datetime AS pickup_dt, dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_fhvhv WHERE year_month BETWEEN '2024-01' AND '2024-06'), with_bounds AS (SELECT taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id, CAST(date_parse(year_month || '-01', '%Y-%m-%d') AS TIMESTAMP) AS month_start, CAST(date_add('month', 1, date_parse(year_month || '-01', '%Y-%m-%d')) AS TIMESTAMP) AS next_month_start FROM harmonized), raw_metrics AS (SELECT taxi_type, year_month, COUNT(*) AS raw_count, COUNT_IF(pickup_dt IS NULL) AS null_pickup_count, COUNT_IF(pickup_dt IS NOT NULL AND (pickup_dt < month_start OR pickup_dt >= next_month_start)) AS out_of_month_count, COUNT_IF(pickup_dt IS NOT NULL AND dropoff_dt IS NOT NULL AND dropoff_dt < pickup_dt) AS bad_order_count FROM with_bounds GROUP BY taxi_type, year_month), deduped_valid AS (SELECT taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id FROM with_bounds WHERE pickup_dt IS NOT NULL AND pickup_dt >= month_start AND pickup_dt < next_month_start GROUP BY taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id), valid_metrics AS (SELECT taxi_type, year_month, COUNT(*) AS valid_deduped_count FROM deduped_valid GROUP BY taxi_type, year_month) SELECT r.taxi_type, r.year_month, r.raw_count, r.null_pickup_count, r.out_of_month_count, r.bad_order_count, COALESCE(v.valid_deduped_count, 0) AS valid_deduped_count, (r.raw_count - COALESCE(v.valid_deduped_count, 0)) AS removed_count, ROUND(CAST(r.raw_count - COALESCE(v.valid_deduped_count, 0) AS DOUBLE) * 100.0 / NULLIF(CAST(r.raw_count AS DOUBLE), 0), 4) AS removed_pct, CASE WHEN COALESCE(v.valid_deduped_count, 0) > 0 AND (CAST(r.raw_count - COALESCE(v.valid_deduped_count, 0) AS DOUBLE) * 100.0 / NULLIF(CAST(r.raw_count AS DOUBLE), 0)) < 5.0 THEN 'PASS' ELSE 'FAIL' END AS dq_status, CAST(current_timestamp AS TIMESTAMP) AS processed_at FROM raw_metrics r LEFT JOIN valid_metrics v ON r.taxi_type = v.taxi_type AND r.year_month = v.year_month",
+                "QueryExecutionContext": {
+                  "Database": "${DatabaseName}"
+                },
+                "ResultConfiguration": {
+                  "OutputLocation": "s3://${BucketName}/athena-results/dq_audit/"
+                }
+              },
+              "ResultPath": "$.DqInsertResult",
+              "Next": "CheckDataQualityGate"
+            },
+            "CheckDataQualityGate": {
+              "Type": "Task",
+              "Comment": "Query dq_audit_log for total batches and failed batches",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString": "SELECT COUNT(*) AS total_batches, COUNT_IF(dq_status <> 'PASS') AS failed_batches FROM ${DatabaseName}.dq_audit_log WHERE year_month BETWEEN '2024-01' AND '2024-06'",
+                "QueryExecutionContext": {
+                  "Database": "${DatabaseName}"
+                },
+                "ResultConfiguration": {
+                  "OutputLocation": "s3://${BucketName}/athena-results/dq_gate/"
+                }
+              },
+              "ResultPath": "$.DqGateQuery",
+              "Next": "GetDqQueryResults"
+            },
+            "GetDqQueryResults": {
+              "Type": "Task",
+              "Comment": "Fetch DQ gate counts into Step Functions execution payload",
+              "Resource": "arn:aws:states:::athena:getQueryResults",
+              "Parameters": {
+                "QueryExecutionId.$": "$.DqGateQuery.QueryExecution.QueryExecutionId"
+              },
+              "ResultPath": "$.DqGateResults",
+              "Next": "EvaluateDqGate"
+            },
+            "EvaluateDqGate": {
+              "Type": "Choice",
+              "Comment": "Verify all 24 batches exist and 0 batches failed DQ criteria",
+              "Choices": [
+                {
+                  "And": [
+                    {
+                      "Variable": "$.DqGateResults.ResultSet.Rows[1].Data[0].VarCharValue",
+                      "StringEquals": "24"
+                    },
+                    {
+                      "Variable": "$.DqGateResults.ResultSet.Rows[1].Data[1].VarCharValue",
+                      "StringEquals": "0"
+                    }
+                  ],
+                  "Next": "PopulateCuratedDailyTable"
+                }
+              ],
+              "Default": "PipelineFailedDqGate"
+            },
+            "PipelineFailedDqGate": {
+              "Type": "Fail",
+              "Error": "DataQualityGateFailed",
+              "Cause": "Data Quality Gate failed: either total_batches != 24 or one or more monthly batches had dq_status = FAIL (removed_pct >= 5.0% or valid_deduped_count == 0)."
+            },
+            "PopulateCuratedDailyTable": {
+              "Type": "Task",
+              "Comment": "Insert 728 daily aggregated valid trip records (182 days x 4 taxi types) into curated_daily_trips",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString": "INSERT INTO ${DatabaseName}.curated_daily_trips WITH harmonized AS (SELECT 'yellow' AS taxi_type, year_month, CAST(vendorid AS VARCHAR) AS provider_id, tpep_pickup_datetime AS pickup_dt, tpep_dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_yellow WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'green' AS taxi_type, year_month, CAST(vendorid AS VARCHAR) AS provider_id, lpep_pickup_datetime AS pickup_dt, lpep_dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_green WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'fhv' AS taxi_type, year_month, CAST(dispatching_base_num AS VARCHAR) AS provider_id, pickup_datetime AS pickup_dt, dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_fhv WHERE year_month BETWEEN '2024-01' AND '2024-06' UNION ALL SELECT 'fhvhv' AS taxi_type, year_month, CAST(hvfhs_license_num AS VARCHAR) AS provider_id, pickup_datetime AS pickup_dt, dropoff_datetime AS dropoff_dt, CAST(pulocationid AS BIGINT) AS pu_id, CAST(dolocationid AS BIGINT) AS do_id FROM ${DatabaseName}.raw_fhvhv WHERE year_month BETWEEN '2024-01' AND '2024-06'), deduped_valid AS (SELECT taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id FROM harmonized WHERE pickup_dt IS NOT NULL AND pickup_dt >= CAST(date_parse(year_month || '-01', '%Y-%m-%d') AS TIMESTAMP) AND pickup_dt < CAST(date_add('month', 1, date_parse(year_month || '-01', '%Y-%m-%d')) AS TIMESTAMP) GROUP BY taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id) SELECT taxi_type, year_month, CAST(pickup_dt AS DATE) AS pickup_date, COUNT(*) AS valid_trip_count, COUNT(DISTINCT pu_id) AS distinct_pu_zones, COUNT(DISTINCT do_id) AS distinct_do_zones, CAST(current_timestamp AS TIMESTAMP) AS updated_at FROM deduped_valid GROUP BY taxi_type, year_month, CAST(pickup_dt AS DATE)",
+                "QueryExecutionContext": {
+                  "Database": "${DatabaseName}"
+                },
+                "ResultConfiguration": {
+                  "OutputLocation": "s3://${BucketName}/athena-results/curated_load/"
+                }
+              },
+              "ResultPath": "$.CuratedLoadResult",
+              "Next": "BuildFinalAnalyticalAnswer"
+            },
+            "BuildFinalAnalyticalAnswer": {
+              "Type": "Task",
+              "Comment": "Produce the final H1 2024 most-used taxi ranking table with monthly breakdown and daily averages",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString": "SELECT RANK() OVER (ORDER BY SUM(valid_trip_count) DESC) AS usage_rank, taxi_type, SUM(CASE WHEN year_month = '2024-01' THEN valid_trip_count ELSE 0 END) AS jan_2024, SUM(CASE WHEN year_month = '2024-02' THEN valid_trip_count ELSE 0 END) AS feb_2024, SUM(CASE WHEN year_month = '2024-03' THEN valid_trip_count ELSE 0 END) AS mar_2024, SUM(CASE WHEN year_month = '2024-04' THEN valid_trip_count ELSE 0 END) AS apr_2024, SUM(CASE WHEN year_month = '2024-05' THEN valid_trip_count ELSE 0 END) AS may_2024, SUM(CASE WHEN year_month = '2024-06' THEN valid_trip_count ELSE 0 END) AS jun_2024, SUM(valid_trip_count) AS total_h1_2024_valid_trips, CAST(ROUND(CAST(SUM(valid_trip_count) AS DOUBLE) / NULLIF(COUNT(DISTINCT pickup_date), 0), 0) AS BIGINT) AS avg_daily_trips_h1, ROUND(CAST(SUM(valid_trip_count) AS DOUBLE) * 100.0 / SUM(SUM(valid_trip_count)) OVER (), 2) AS share_of_total_trips_pct FROM ${DatabaseName}.curated_daily_trips WHERE year_month BETWEEN '2024-01' AND '2024-06' GROUP BY taxi_type ORDER BY total_h1_2024_valid_trips DESC",
+                "QueryExecutionContext": {
+                  "Database": "${DatabaseName}"
+                },
+                "ResultConfiguration": {
+                  "OutputLocation": "s3://${BucketName}/analytics/final_most_used/"
+                }
+              },
+              "End": true
+            }
+          }
+        }
+
+Outputs:
+  GlueDatabaseName:
+    Description: Glue Catalog Database Name
+    Value: !Ref NycTaxiGlueDatabase
+  StateMachineArn:
+    Description: Step Functions State Machine ARN
+    Value: !Ref NycTaxiStateMachine
+  S3BucketName:
+    Description: S3 Bucket used by the pipeline
+    Value: !Ref BucketName

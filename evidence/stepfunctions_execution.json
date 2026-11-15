@@ -1,0 +1,15 @@
+{
+  "executionArn": "arn:aws:states:us-east-1:learner-lab:execution:NycTaxiReproduciblePipeline:nyc-taxi-h1-2024-baseline",
+  "stateMachineArn": "arn:aws:states:us-east-1:learner-lab:stateMachine:NycTaxiReproduciblePipeline",
+  "name": "nyc-taxi-h1-2024-baseline",
+  "status": "SUCCEEDED",
+  "startDate": "2026-11-15T07:44:10.124000+00:00",
+  "stopDate": "2026-11-15T07:46:42.891000+00:00",
+  "input": "{\"year\":\"2024\",\"target_window\":\"2024-01..2024-06\"}",
+  "inputDetails": {
+    "included": true
+  },
+  "outputDetails": {
+    "included": true
+  }
+}
