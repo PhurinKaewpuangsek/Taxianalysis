@@ -4,15 +4,15 @@ Which type of taxi was most used in the first half of 2024? Convince us the answ
 
 ---
 
-## 1. ข้อมูลที่ใช้และตัวชี้วัด
+## 1. Data Source and Metric Used
 
-### แหล่งที่มาและขอบเขตข้อมูล
+### Data Source and Scope
 ข้อมูลจาก NYC TLC Trip Record Data รูปแบบไฟล์ Parquet จำนวน 24 ไฟล์ มาจากแท็กซี่ 4 ประเภทคือ `yellow` `green` `fhv` และ `fhvhv` ช่วงเดือนมกราคมถึงมิถุนายน 2024 ขนาดรวมประมาณ 3.2 GB จำนวนแถวดิบทั้งหมด 149655796 แถว
 
-### นิยามคำว่าใช้งานมากที่สุด
+### Metric Definition
 วัดจากจำนวนเที่ยวการเดินทางที่สมบูรณ์หลังทำความสะอาดแล้ว ไม่กรองข้อมูลด้วยราคาค่าโดยสารหรือระยะทาง เพราะรายการที่ค่าโดยสารติดลบหรือเป็นศูนย์ยังถือเป็นการเดินทางที่เกิดขึ้นจริง และข้อมูล `fhv` ไม่มีคอลัมน์ราคาค่าโดยสารหรือระยะทาง การนับจำนวนเที่ยวจึงเป็นวิธีเดียวที่เปรียบเทียบแท็กซี่ทั้ง 4 ประเภทได้อย่างยุติธรรม
 
-### ความแตกต่างของโครงสร้างข้อมูลแต่ละประเภท
+### Schema Differences Across Taxi Types
 
 | ประเภทแท็กซี่ | จำนวนคอลัมน์ดิบ | คอลัมน์ผู้ให้บริการ | คอลัมน์เวลาขึ้นรถ | คอลัมน์เวลาลงรถ | คอลัมน์โซนขึ้นและลงรถ | ลักษณะเฉพาะของข้อมูล |
 | :--- | :---: | :--- | :--- | :--- | :--- | :--- |
@@ -23,20 +23,20 @@ Which type of taxi was most used in the first half of 2024? Convince us the answ
 
 ---
 
-## 2. โครงสร้าง Pipeline และ Data Flow Diagram
+## 2. Pipeline Architecture and Data Flow Diagram
 
-### โครงสร้างการจัดเก็บข้อมูลบน S3
+### S3 Lakehouse Storage Layout
 ข้อมูลทั้งหมดจัดเก็บใน Bucket `s3://nyc-taxi-pipeline-311651746847` แบ่งเป็น 4 ส่วน
 1. `raw/` เก็บไฟล์ Parquet ต้นฉบับแยกตามประเภทแท็กซี่และเดือน `year_month=YYYY-MM`
 2. `dq_audit/` เก็บตาราง Apache Iceberg ชื่อ `nyc_taxi_db.dq_audit_log` บันทึกผลตรวจคุณภาพข้อมูลรายไฟล์
 3. `curated/daily_trips/` เก็บตาราง Apache Iceberg ชื่อ `nyc_taxi_db.curated_daily_trips` บันทึกข้อมูลสรุปรายวันที่ผ่านการทำความสะอาดแล้ว
 4. `analytics/final_most_used/` เก็บผลลัพธ์การวิเคราะห์สุดท้ายในรูปแบบไฟล์ CSV
 
-### แผนภาพการทำงานของ Pipeline
+### Pipeline Data Flow Diagram
 
 ![Pipeline Architecture Diagram](TaxiAnalysisdiagram1.drawio.png)
 
-### โครงสร้างไฟล์ใน Repository
+### Repository Structure
 ```text
 Taxianalysis/
 ├── template.yaml                      # CloudFormation สร้าง Glue Catalog และ Step Functions
@@ -55,9 +55,9 @@ Taxianalysis/
 
 ---
 
-## 3. วิธีติดตั้งและวิธีรันระบบ
+## 3. Setup and Execution Guide
 
-### การรันทั้งระบบในคำสั่งเดียวบน AWS CloudShell
+### One Command Deployment on AWS CloudShell
 เปิด AWS CloudShell ในโซน `us-east-1` แล้วรันคำสั่งต่อไปนี้
 
 ```bash
@@ -69,7 +69,7 @@ chmod +x scripts/*.sh
 
 สคริปต์จะค้นหาเลขบัญชี AWS อัตโนมัติ สร้าง S3 Bucket สตรีมไฟล์ Parquet ทั้ง 24 ไฟล์เข้า S3 ติดตั้ง CloudFormation โดยใช้สิทธิ์ `LabRole` สั่งรัน Step Functions รอจนสถานะสำเร็จ และดึงไฟล์หลักฐานทั้งหมดลงโฟลเดอร์ `evidence/`
 
-### การรันซ้ำหรืออัปเดตเมื่อมีข้อมูลเดือนใหม่
+### Idempotent Rerun and Incremental Monthly Update
 หากต้องการรันซ้ำในเดือนเดิมสามารถรัน `./scripts/deploy_and_run.sh` ซ้ำได้ทันที สคริปต์จะข้ามไฟล์ที่มีใน S3 แล้ว และตาราง Iceberg จะลบเฉพาะข้อมูลช่วงเดือนเป้าหมายเดิมออกก่อนเขียนใหม่ ทำให้ไม่มีข้อมูลซ้ำ
 
 หากมีข้อมูลเดือนใหม่เช่นเดือนกรกฎาคม 2024 สามารถสั่งโหลดเพิ่มเข้า S3 ได้ด้วยคำสั่ง
@@ -80,16 +80,16 @@ chmod +x scripts/*.sh
 
 ---
 
-## 4. การตรวจสอบคุณภาพข้อมูลและหลักฐานการทำงาน
+## 4. Data Quality Validation and Execution Evidence
 
-### กฎการทำความสะอาดข้อมูล 3 ข้อ
+### Data Cleaning Rules
 1. เวลาขึ้นรถต้องไม่เป็นค่าว่าง `pickup_dt IS NOT NULL`
 2. เวลาขึ้นรถต้องอยู่ในเดือนของไฟล์นั้นจริง `pickup_dt >= month_start AND pickup_dt < next_month_start`
 3. ตัดแถวซ้ำด้วยคีย์หลัก 5 ตัวคือ รหัสผู้ให้บริการ เวลาขึ้นรถ เวลาลงรถ โซนขึ้นรถ และโซนลงรถ ภายในแต่ละเดือน
 
 เกณฑ์การผ่าน Data Quality Gate คือทุกไฟล์ต้องมีจำนวนแถวที่ผ่านการกรองมากกว่า 0 และมีสัดส่วนแถวที่ถูกตัดออกน้อยกว่า 5 เปอร์เซ็นต์ หากครบทั้ง 24 ไฟล์และไม่มีไฟล์ใดตกเกณฑ์ Step Functions จึงจะอนุญาตให้โหลดข้อมูลเข้าตาราง `curated_daily_trips`
 
-### สรุปผลตรวจสอบคุณภาพข้อมูลจากตาราง `dq_audit_log`
+### Data Quality Audit Summary
 
 | ประเภทแท็กซี่ | จำนวนไฟล์ | จำนวนแถวดิบ | เวลาขึ้นรถว่าง | เวลาหลุดนอกเดือน | เวลาลงก่อนเวลาขึ้น | จำนวนแถวที่ผ่านเกณฑ์ | จำนวนแถวที่ถูกตัดออก | สัดส่วนที่ถูกตัดออก | สถานะ |
 | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: | :---: |
@@ -99,42 +99,42 @@ chmod +x scripts/*.sh
 | `green` | 6 | 339807 | 0 | 44 | 0 | **338596** | 1211 | 0.3236% ถึง 0.3860% | PASS |
 | **รวมทั้งหมด** | **24** | **149655796** | **0** | **193** | **300** | **149415376** | **240420** | **0.1606%** | **PASS 24/24** |
 
-### ไฟล์หลักฐานการทำงานในโฟลเดอร์ `evidence/`
+### Exported Evidence Artifacts
 1. [evidence/stepfunctions_execution.json](evidence/stepfunctions_execution.json) หลักฐานสถานะการทำงานของ Step Functions ที่รันสำเร็จ `SUCCEEDED`
 2. [evidence/dq_audit_results.csv](evidence/dq_audit_results.csv) ผลตรวจสอบคุณภาพข้อมูลครบทั้ง 24 ไฟล์จากตาราง `dq_audit_log`
 3. [evidence/curated_sample_data.csv](evidence/curated_sample_data.csv) ตัวอย่างชุดข้อมูลพร้อมใช้จากตาราง `curated_daily_trips` ซึ่งมีทั้งหมด 728 แถวจาก 182 วันคูณ 4 ประเภทแท็กซี่
 4. [evidence/final_most_used_2024h1.csv](evidence/final_most_used_2024h1.csv) ผลลัพธ์การจัดอันดับแท็กซี่ที่ถูกใช้งานมากที่สุดในช่วงครึ่งแรกของปี 2024
 
-### ภาพหน้าจอหลักฐานการรันจริงจาก AWS Management Console
+### Live AWS Management Console Screenshots
 
-#### 1. สถานะการรัน Step Functions สำเร็จครบทุกขั้นตอน
+#### 1. Step Functions Execution Status
 ![Step Functions Execution Details](evidence/screenshots/01_stepfunctions_execution_details.png)
 
-#### 2. ผลลัพธ์คำตอบสุดท้ายบน Amazon Athena
+#### 2. Final Analytical Output on Amazon Athena
 ![Athena Final Most Used Result](evidence/screenshots/07_athena_final_most_used_result.png)
 
-#### 3. ผลตรวจสอบคุณภาพข้อมูลทั้ง 24 ไฟล์บน Amazon Athena
+#### 3. Data Quality Audit Log on Amazon Athena
 ![Athena DQ Audit Log](evidence/screenshots/09_athena_dq_audit_log.png)
 
-#### 4. ตัวอย่างชุดข้อมูลพร้อมใช้ `curated_daily_trips` บน Amazon Athena
+#### 4. Curated Daily Trips Sample on Amazon Athena
 ![Athena Curated Daily Trips](evidence/screenshots/08_athena_curated_daily_trips.png)
 
-#### 5. ประวัติการรัน Query ของ Pipeline บน Amazon Athena
+#### 5. Pipeline Query History on Amazon Athena
 ![Athena Recent Queries](evidence/screenshots/06_athena_recent_queries.png)
 
-#### 6. โครงสร้างการจัดเก็บข้อมูลและ Partition บน Amazon S3
+#### 6. S3 Lakehouse Zones and Partitions
 ![S3 Lakehouse Bucket](evidence/screenshots/02_s3_lakehouse_bucket.png)
 ![S3 Raw Partitions](evidence/screenshots/03_s3_raw_partitions.png)
 
-#### 7. ตารางทั้ง 6 ตารางใน AWS Glue Data Catalog และ CloudFormation Stack
+#### 7. AWS Glue Data Catalog and CloudFormation Stack
 ![Glue Data Catalog Tables](evidence/screenshots/04_glue_catalog_tables.png)
 ![CloudFormation Stack](evidence/screenshots/05_cloudformation_stack.png)
 
 ---
 
-## 5. ผลการวิเคราะห์และคำตอบของโจทย์หลัก
+## 5. Analytical Results and Core Answer
 
-### ตารางสรุปจำนวนเที่ยวการเดินทางที่สมบูรณ์ในช่วงครึ่งแรกของปี 2024
+### H1 2024 Valid Trip Counts by Taxi Type
 
 | อันดับ | ประเภทแท็กซี่ | ม.ค. 2024 | ก.พ. 2024 | มี.ค. 2024 | เม.ย. 2024 | พ.ค. 2024 | มิ.ย. 2024 | รวม 6 เดือน | เฉลี่ยต่อวัน | สัดส่วนตลาด |
 | :---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -150,20 +150,20 @@ chmod +x scripts/*.sh
 
 ---
 
-## 6. การตัดสินใจสำคัญในการออกแบบ Pipeline
+## 6. Key Pipeline Design Decisions
 
-### การตัดสินใจที่ 1 การปรับโครงสร้าง Schema ให้เป็นมาตรฐานเดียวกันและการตัดข้อมูลซ้ำด้วย `GROUP BY`
+### Decision 1 Schema Harmonization and 5 Key Deduplication
 ไฟล์ Parquet ทั้ง 4 ประเภทมีชื่อคอลัมน์ตัวพิมพ์ใหญ่เล็กไม่ตรงกัน เช่น `dropOff_datetime` และ `PUlocationID` ใน `fhv` รวมถึงชนิดตัวเลขในแต่ละเดือนสลับกันระหว่าง `INT32` และ `INT64` เราจึงตั้งค่า `parquet.column.index.access = false` ใน Glue Catalog เพื่อให้จับคู่คอลัมน์โดยไม่สนใจตัวพิมพ์ใหญ่เล็ก และกำหนดคอลัมน์รหัสเป็น `bigint` ทั้งหมดเพื่อป้องกันข้อผิดพลาดขณะอ่านไฟล์ นอกจากนี้ในการตัดแถวซ้ำด้วยคีย์ 5 ตัว เราเลือกใช้ `GROUP BY` แทน `COUNT(DISTINCT)` เพราะข้อมูล `fhv` มีค่าว่างในคอลัมน์โซนขึ้นและลงรถจำนวนมาก การใช้ `GROUP BY` จะรักษาแถวที่มีค่าว่างไว้ได้ถูกต้องตรงกับผลลัพธ์ต้นแบบใน Submission 1 ทุกแถว
 
-### การตัดสินใจที่ 2 การใช้ตาราง Apache Iceberg ร่วมกับ Data Quality Gate บน Step Functions
+### Decision 2 Idempotent Apache Iceberg Tables and Step Functions DQ Gate
 เพื่อให้ Pipeline รันซ้ำได้โดยไม่เกิดข้อมูลซ้ำซ้อน เราเลือกสร้างตาราง `dq_audit_log` และ `curated_daily_trips` เป็น Apache Iceberg ที่รองรับคำสั่ง `DELETE` ก่อนเริ่มคำนวณทุกครั้งระบบจะลบข้อมูลเฉพาะช่วงเดือนเป้าหมายเดิมออกก่อนเสมอ และคั่นกลางด้วยสถานะ `EvaluateDqGate` ใน Step Functions เพื่อตรวจสอบว่าข้อมูลทั้ง 24 ไฟล์ผ่านเกณฑ์คุณภาพครบทั้งหมดก่อนจึงจะบันทึกเข้าสู่ตาราง Curated
 
-### การตัดสินใจที่ 3 การสตรีมข้อมูลจากเว็บต้นทาง NYC TLC เข้า S3 โดยตรง
+### Decision 3 Zero Disk Streaming Ingestion to S3
 เนื่องจากสภาพแวดล้อม AWS CloudShell จำกัดพื้นที่ดิสก์เพียง 1 GB ซึ่งไม่พอเก็บไฟล์ Parquet ขนาด 3.2 GB เราจึงออกแบบสคริปต์ `ingest_to_s3.sh` ให้ใช้ท่อคำสั่ง `curl | aws s3 cp -` เพื่อส่งข้อมูลจากต้นทางเข้า S3 โดยตรงโดยไม่เขียนลงดิสก์ และเช็คไฟล์ที่มีอยู่แล้วด้วย `head-object` เพื่อไม่ต้องอัปโหลดซ้ำในการรันครั้งถัดไป
 
 ---
 
-## 7. การเปรียบเทียบการพัฒนาจาก Submission 1 สู่ Submission 2
+## 7. Comparison Between Submission 1 and Submission 2
 
 | หัวข้อเปรียบเทียบ | Submission 1 Baseline | Submission 2 Reproducible Pipeline |
 | :--- | :--- | :--- |
@@ -176,7 +176,7 @@ chmod +x scripts/*.sh
 
 ---
 
-## 8. ข้อจำกัดของ Pipeline ปัจจุบัน
+## 8. Current Pipeline Limitations
 
 1. ข้อจำกัดด้านสิทธิ์ของ AWS Academy Learner Lab ที่ไม่อนุญาตให้สร้าง IAM Role ใหม่ ทำให้ทุกบริการต้องใช้ `LabRole` ร่วมกัน และเซสชันมีเวลาจำกัดตามรอบของห้องปฏิบัติการ
 2. คำสั่ง SQL ใน Step Functions กำหนดช่วงเดือนเป้าหมายเป็นครึ่งแรกของปี 2024 หากต้องการเปลี่ยนช่วงเดือนแบบไดนามิกต้องส่งพารามิเตอร์ช่วงเดือนผ่าน Input ของ Step Functions เพิ่มเติม
