@@ -158,11 +158,41 @@ Every batch `(taxi_type, year_month)` is evaluated against three rules before en
 | **`green`** | 6 / 6 | 339,807 | 0 | 44 | 0 | **338,596** | 1,211 | `0.3236% – 0.3860%` | **PASS (6/6)** |
 | **Total** | **24 / 24** | **149,655,796** | **0** | **193** | **300** | **149,415,376** | **240,420** | **`0.1606%` overall** | **PASS (24/24)** |
 
-### 4.3 Exported Evidence Artifacts (`evidence/`)
-- [`evidence/stepfunctions_execution.json`](evidence/stepfunctions_execution.json): Full `aws stepfunctions describe-execution` JSON output proving `"status": "SUCCEEDED"`.
+### 4.3 Exported Evidence Artifacts & Live AWS Console Screenshots (`evidence/`)
+
+#### Machine-Readable Evidence Files
+- [`evidence/stepfunctions_execution.json`](evidence/stepfunctions_execution.json): Full `aws stepfunctions describe-execution` JSON output proving `"status": "SUCCEEDED"` for execution `nyc-taxi-h1-2024-20261115-172638`.
 - [`evidence/dq_audit_results.csv`](evidence/dq_audit_results.csv): All 24 monthly audit rows exported from `nyc_taxi_db.dq_audit_log`.
-- [`evidence/curated_sample_data.csv`](evidence/curated_sample_data.csv): Sample daily aggregated records from `nyc_taxi_db.curated_daily_trips` (`728` total rows = `182` days × `4` taxi types, including distinct pickup/dropoff zone counts).
+- [`evidence/curated_daily_trips` sample (`evidence/curated_sample_data.csv`)](evidence/curated_sample_data.csv): Sample daily aggregated records (`728` total rows = `182` days × `4` taxi types, including distinct pickup/dropoff zone counts).
 - [`evidence/final_most_used_2024h1.csv`](evidence/final_most_used_2024h1.csv): Final H1 2024 ranking and monthly pivot output.
+
+#### Live AWS Management Console Screenshots (`Account: 3116-5174-6847`, `us-east-1`)
+
+1. **Step Functions Execution Status & Step Table (`NycTaxiReproduciblePipeline` — `Succeeded`)**
+   ![Step Functions Execution Details](evidence/screenshots/01_stepfunctions_execution_details.png)
+   *(Full 93-event execution log screenshot also saved at [`evidence/screenshots/01b_stepfunctions_events_full.png`](evidence/screenshots/01b_stepfunctions_events_full.png))*
+
+2. **Athena Query Editor — Final Analytical Answer (`fhvhv = 120,864,438` Valid Trips)**
+   ![Athena Final Most Used Result](evidence/screenshots/07_athena_final_most_used_result.png)
+
+3. **Athena Query Editor — 24-Batch Data Quality Audit Log (`dq_audit_log` — `24/24 PASS`)**
+   ![Athena DQ Audit Log](evidence/screenshots/09_athena_dq_audit_log.png)
+
+4. **Athena Query Editor — Curated Daily Trips Dataset (`curated_daily_trips`)**
+   ![Athena Curated Daily Trips](evidence/screenshots/08_athena_curated_daily_trips.png)
+
+5. **Athena Query Execution History (`primary` Workgroup — All Pipeline Stages Completed)**
+   ![Athena Recent Queries](evidence/screenshots/06_athena_recent_queries.png)
+
+6. **S3 Lakehouse Storage Layout (`s3://nyc-taxi-pipeline-311651746847`) & Hive Partitioning (`raw/fhvhv/year_month=YYYY-MM/`)**
+   ![S3 Lakehouse Bucket](evidence/screenshots/02_s3_lakehouse_bucket.png)
+   ![S3 Raw Partitions](evidence/screenshots/03_s3_raw_partitions.png)
+
+7. **Glue Data Catalog (`nyc_taxi_db` — 4 Raw External Parquet Tables + 2 Apache Iceberg Tables)**
+   ![Glue Data Catalog Tables](evidence/screenshots/04_glue_catalog_tables.png)
+
+8. **CloudFormation Stack (`nyc-taxi-pipeline-stack` — `CREATE_COMPLETE`)**
+   ![CloudFormation Stack](evidence/screenshots/05_cloudformation_stack.png)
 
 ---
 
