@@ -1,7 +1,6 @@
 # NYC Taxi Reproducible Data Pipeline
 
-ระบบ Data Pipeline อัตโนมัติบน AWS สำหรับตอบคำถามหลักของโจทย์
-**แท็กซี่ประเภทใดถูกใช้งานมากที่สุดในช่วงครึ่งแรกของปี 2024**
+Which type of taxi was most used in the first half of 2024? Convince us the answer is correct.
 
 ---
 
@@ -36,33 +35,6 @@
 ### แผนภาพการทำงานของ Pipeline
 
 ![Pipeline Architecture Diagram](TaxiAnalysisdiagram1.drawio.png)
-
-```mermaid
-flowchart TD
-    CF["แหล่งข้อมูลสาธารณะ NYC TLC\nไฟล์ Parquet 24 ไฟล์"] -->|"scripts/ingest_to_s3.sh\ncurl ส่งตรงเข้า S3 ไม่ผ่านดิสก์"| RAW["S3 Raw Zone\nraw/taxi_type/year_month=YYYY-MM/"]
-
-    subgraph SFN["AWS Step Functions: NycTaxiReproduciblePipeline"]
-        S1["Step 1: RepairPartitionsParallel\nรัน MSCK REPAIR TABLE ทั้ง 4 ตารางดิบ"]
-        S2["Step 2: EnsureCuratedAndAuditTablesExist\nสร้างตาราง Iceberg dq_audit_log และ curated_daily_trips"]
-        S3["Step 3: DeleteExistingTargetWindowForIdempotency\nลบข้อมูลช่วงเดือนเป้าหมายเดิมออกก่อนเพื่อป้องกันข้อมูลซ้ำ"]
-        S4["Step 4: ComputeAndLogDataQualityMetrics\nรวม Schema ทั้ง 4 ตาราง กรองข้อมูล 3 กฎ และบันทึกผลตรวจคุณภาพ 24 แถว"]
-        S5["Step 5: CheckDataQualityGate\nดึงจำนวนไฟล์ที่ผ่านเกณฑ์จาก dq_audit_log"]
-        S6{"Step 5b: EvaluateDqGate\nครบ 24 ไฟล์ และไม่มีไฟล์ที่ FAIL?"}
-        FAIL["PipelineFailedDqGate\nหยุดการทำงานทันที"]
-        S7["Step 6: PopulateCuratedDailyTable\nบันทึกข้อมูลสรุปรายวัน 728 แถวลง curated_daily_trips"]
-        S8["Step 7: BuildFinalAnalyticalAnswer\nสร้างตารางสรุปผลและจัดอันดับแท็กซี่ครึ่งแรกปี 2024"]
-
-        S1 --> S2 --> S3 --> S4 --> S5 --> S6
-        S6 -- "ผ่านเกณฑ์" --> S7 --> S8
-        S6 -- "ไม่ผ่านเกณฑ์" --> FAIL
-    end
-
-    RAW --> S1
-    S4 -->|"Athena เขียนลง S3"| ICE_DQ[("ตาราง Iceberg บน S3\nnyc_taxi_db.dq_audit_log")]
-    S7 -->|"Athena เขียนลง S3"| ICE_CUR[("ตาราง Iceberg บน S3\nnyc_taxi_db.curated_daily_trips")]
-    S8 -->|"Athena เขียน CSV ลง S3"| S3_MART["S3 Analytics Output\nanalytics/final_most_used/"]
-    S3_MART -->|"scripts/export_evidence.sh\naws s3 cp ดึงลงโปรเจกต์"| MART["ไฟล์หลักฐานใน GitHub\nevidence/final_most_used_2024h1.csv"]
-```
 
 ### โครงสร้างไฟล์ใน Repository
 ```text
