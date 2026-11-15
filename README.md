@@ -1,110 +1,89 @@
-# NYC Taxi — Reproducible Data Lakehouse Pipeline (Submission 2)
+# NYC Taxi Reproducible Data Pipeline
 
-End-to-end, reproducible serverless data lakehouse pipeline on **AWS (S3 + Glue Data Catalog + Athena + Apache Iceberg + Step Functions)** designed for **AWS Academy Learner Lab (`us-east-1`)**.
-
-This pipeline operationalizes the Submission 1 baseline analysis (`submission1_baseline/submission1_duckdb_baseline.ipynb`) into an automated, idempotent, quality-gated workflow that answers the core question:
-
-> **"Which taxi type was the most used in the first half of 2024? Convince us the answer is correct."**
+ระบบ Data Pipeline อัตโนมัติบน AWS สำหรับตอบคำถามหลักของโจทย์
+**แท็กซี่ประเภทใดถูกใช้งานมากที่สุดในช่วงครึ่งแรกของปี 2024**
 
 ---
 
-## 1. Project Overview & Data Used
+## 1. ข้อมูลที่ใช้และตัวชี้วัด
 
-### 1.1 Metric Definition: "Most Used"
-- **Metric**: Highest number of **valid trip records** (row count after applying data quality and deduplication rules) across January–June 2024.
-- **Why Trip Record Count (and why fare/distance/passenger columns are intentionally NOT filtered)**:
-  1. **Cross-Schema Comparability**: Traditional `fhv` records contain only 7 dispatch columns and completely lack `fare_amount`, `trip_distance`, and `passenger_count`. Trip record count is the only metric shared across all 4 NYC TLC fleets.
-  2. **Physical Trip Integrity**: A trip with a `$0` or negative fare adjustment or `0` recorded distance still represents a physical dispatch/trip event. Filtering financial anomalies would distort physical usage counts. Only anomalies that affect **whether a row represents a distinct trip in the target month** are removed.
+### แหล่งที่มาและขอบเขตข้อมูล
+ข้อมูลจาก NYC TLC Trip Record Data รูปแบบไฟล์ Parquet จำนวน 24 ไฟล์ มาจากแท็กซี่ 4 ประเภทคือ `yellow` `green` `fhv` และ `fhvhv` ช่วงเดือนมกราคมถึงมิถุนายน 2024 ขนาดรวมประมาณ 3.2 GB จำนวนแถวดิบทั้งหมด 149655796 แถว
 
-### 1.2 Data Scope & Source
-- **Source**: [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) (`https://d37ci6vzurychx.cloudfront.net/trip-data/{taxi_type}_tripdata_2024-{month:02d}.parquet`)
-- **Scope**: 4 taxi types (`yellow`, `green`, `fhv`, `fhvhv`) × 6 months (`2024-01` through `2024-06`) = **24 Parquet files** (~3.2 GB compressed, `149,655,796` raw rows → `149,415,376` valid deduplicated trips).
+### นิยามคำว่าใช้งานมากที่สุด
+วัดจากจำนวนเที่ยวการเดินทางที่สมบูรณ์หลังทำความสะอาดแล้ว ไม่กรองข้อมูลด้วยราคาค่าโดยสารหรือระยะทาง เพราะรายการที่ค่าโดยสารติดลบหรือเป็นศูนย์ยังถือเป็นการเดินทางที่เกิดขึ้นจริง และข้อมูล `fhv` ไม่มีคอลัมน์ราคาค่าโดยสารหรือระยะทาง การนับจำนวนเที่ยวจึงเป็นวิธีเดียวที่เปรียบเทียบแท็กซี่ทั้ง 4 ประเภทได้อย่างยุติธรรม
 
-### 1.3 Heterogeneous Raw Schemas & Harmonization Mapping
+### ความแตกต่างของโครงสร้างข้อมูลแต่ละประเภท
 
-Each taxi fleet uses different column names, casing conventions, and integer bit-widths across monthly Parquet files:
-
-| Taxi Type | Raw Cols | Provider ID Column | Pickup Timestamp Column | Dropoff Timestamp Column | Pickup Zone Column | Dropoff Zone Column | Raw Schema Quirks Handled |
-| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`yellow`** | 19 | `VendorID` (`INT`/`BIGINT`) | `tpep_pickup_datetime` | `tpep_dropoff_datetime` | `PULocationID` (`INT`/`BIGINT`) | `DOLocationID` (`INT`/`BIGINT`) | Charge/reversal pairs (`+fare` / `-fare`) share identical 5-key tuples (`full_row_duplicates = 0`). |
-| **`green`** | 20 | `VendorID` (`INT`/`BIGINT`) | `lpep_pickup_datetime` | `lpep_dropoff_datetime` | `PULocationID` (`INT`/`BIGINT`) | `DOLocationID` (`INT`/`BIGINT`) | Includes `ehail_fee` and `trip_type`; charge/reversal pairs (`full_row_duplicates = 0`). |
-| **`fhv`** | 7 | `dispatching_base_num` (`VARCHAR`) | `pickup_datetime` | `dropOff_datetime` *(capital `O`)* | `PUlocationID` *(lowercase `l`, `BIGINT`)* | `DOlocationID` *(lowercase `l`, `BIGINT`)* | No fare/distance columns; nullable location IDs; exact full-row dispatch resubmissions (`721–2,526`/mo). |
-| **`fhvhv`** | 24 | `hvfhs_license_num` (`VARCHAR`) | `pickup_datetime` | `dropoff_datetime` | `PULocationID` (`INT`/`BIGINT`) | `DOLocationID` (`INT`/`BIGINT`) | High-volume app dispatches (Uber/Lyft); ~81% of all NYC trips (`full_row_duplicates = 0`). |
-
-All 4 raw schemas are harmonized at the query boundary into a canonical 7-column tuple:
-`(taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id)`.
+| ประเภทแท็กซี่ | จำนวนคอลัมน์ดิบ | คอลัมน์ผู้ให้บริการ | คอลัมน์เวลาขึ้นรถ | คอลัมน์เวลาลงรถ | คอลัมน์โซนขึ้นและลงรถ | ลักษณะเฉพาะของข้อมูล |
+| :--- | :---: | :--- | :--- | :--- | :--- | :--- |
+| `yellow` | 19 | `VendorID` | `tpep_pickup_datetime` | `tpep_dropoff_datetime` | `PULocationID` `DOLocationID` | แถวที่คีย์ซ้ำกันคือรายการปรับปรุงยอดเงินของเที่ยวเดียวกัน |
+| `green` | 20 | `VendorID` | `lpep_pickup_datetime` | `lpep_dropoff_datetime` | `PULocationID` `DOLocationID` | แถวที่คีย์ซ้ำกันคือรายการปรับปรุงยอดเงินของเที่ยวเดียวกัน |
+| `fhv` | 7 | `dispatching_base_num` | `pickup_datetime` | `dropOff_datetime` | `PUlocationID` `DOlocationID` | ไม่มีคอลัมน์ราคาและระยะทาง ตัวพิมพ์ใหญ่เล็กไม่เหมือนประเภทอื่น และมีแถวซ้ำจากการส่งข้อมูลซ้ำ |
+| `fhvhv` | 24 | `hvfhs_license_num` | `pickup_datetime` | `dropoff_datetime` | `PULocationID` `DOLocationID` | รถแอปพลิเคชันเช่น Uber และ Lyft มีปริมาณข้อมูลมากที่สุด |
 
 ---
 
-## 2. Pipeline Architecture & Data Flow Diagram
+## 2. โครงสร้าง Pipeline และ Data Flow Diagram
 
-### 2.1 Lakehouse Storage Layout (`s3://nyc-taxi-pipeline-<ACCOUNT_ID>/`)
-- **Raw Zone (External Parquet)**: `s3://${BUCKET_NAME}/raw/{taxi_type}/year_month={YYYY-MM}/{taxi_type}_tripdata_{YYYY-MM}.parquet`
-- **Data Quality Audit Zone (Apache Iceberg)**: `s3://${BUCKET_NAME}/dq_audit/` (`nyc_taxi_db.dq_audit_log`)
-- **Curated Zone (Apache Iceberg)**: `s3://${BUCKET_NAME}/curated/daily_trips/` (`nyc_taxi_db.curated_daily_trips`)
-- **Final Analytics Mart (CSV Output)**: `s3://${BUCKET_NAME}/analytics/final_most_used/`
+### โครงสร้างการจัดเก็บข้อมูลบน S3
+ข้อมูลทั้งหมดจัดเก็บใน Bucket `s3://nyc-taxi-pipeline-311651746847` แบ่งเป็น 4 ส่วน
+1. `raw/` เก็บไฟล์ Parquet ต้นฉบับแยกตามประเภทแท็กซี่และเดือน `year_month=YYYY-MM`
+2. `dq_audit/` เก็บตาราง Apache Iceberg ชื่อ `nyc_taxi_db.dq_audit_log` บันทึกผลตรวจคุณภาพข้อมูลรายไฟล์
+3. `curated/daily_trips/` เก็บตาราง Apache Iceberg ชื่อ `nyc_taxi_db.curated_daily_trips` บันทึกข้อมูลสรุปรายวันที่ผ่านการทำความสะอาดแล้ว
+4. `analytics/final_most_used/` เก็บผลลัพธ์การวิเคราะห์สุดท้ายในรูปแบบไฟล์ CSV
 
-### 2.2 End-to-End Pipeline Architecture Diagram
+### แผนภาพการทำงานของ Pipeline
 
 ```mermaid
 flowchart TD
-    CF["NYC TLC CloudFront CDN\n(24 Parquet Files, ~3.2 GB)"] -->|"scripts/ingest_to_s3.sh\ncurl -sSL | aws s3 cp - (Zero-Disk Stream)"| RAW["S3 Raw Zone\ns3://nyc-taxi-pipeline-ACCOUNT_ID/raw/{taxi_type}/year_month=YYYY-MM/"]
+    CF["NYC TLC CloudFront\nไฟล์ Parquet 24 ไฟล์"] -->|"scripts/ingest_to_s3.sh\ncurl ส่งตรงเข้า S3 ไม่ผ่านดิสก์"| RAW["S3 Raw Zone\nraw/taxi_type/year_month=YYYY-MM/"]
 
     subgraph SFN["AWS Step Functions: NycTaxiReproduciblePipeline"]
-        S1["Step 1: RepairPartitionsParallel\nMSCK REPAIR TABLE on raw_yellow, raw_green, raw_fhv, raw_fhvhv"]
-        S2["Step 2: EnsureCuratedAndAuditTablesExist\nCREATE TABLE IF NOT EXISTS (Apache Iceberg)\ndq_audit_log & curated_daily_trips"]
-        S3["Step 3: DeleteExistingTargetWindowForIdempotency\nACID DELETE FROM both Iceberg tables\nWHERE year_month BETWEEN '2024-01' AND '2024-06'"]
-        S4["Step 4: ComputeAndLogDataQualityMetrics\nHarmonize 4 schemas via UNION ALL, apply 3 cleaning rules,\ninsert 24 batch rows into dq_audit_log"]
-        S5["Step 5: CheckDataQualityGate & GetDqQueryResults\nQuery total_batches & failed_batches from dq_audit_log"]
-        S6{"Step 5b: EvaluateDqGate\nChoice State:\ntotal_batches == 24 AND\nfailed_batches == 0?"}
-        FAIL["PipelineFailedDqGate\n(Step Functions Fail State)"]
-        S7["Step 6: PopulateCuratedDailyTable\nInsert 728 daily aggregated rows\n(182 days x 4 taxi types) into curated_daily_trips"]
-        S8["Step 7: BuildFinalAnalyticalAnswer\nGenerate H1 2024 Pivot & Ranking CSV\nin s3://.../analytics/final_most_used/"]
+        S1["Step 1: RepairPartitionsParallel\nรัน MSCK REPAIR TABLE ทั้ง 4 ตารางดิบ"]
+        S2["Step 2: EnsureCuratedAndAuditTablesExist\nสร้างตาราง Iceberg dq_audit_log และ curated_daily_trips"]
+        S3["Step 3: DeleteExistingTargetWindowForIdempotency\nลบข้อมูลช่วงเดือนเป้าหมายเดิมออกก่อนเพื่อป้องกันข้อมูลซ้ำ"]
+        S4["Step 4: ComputeAndLogDataQualityMetrics\nรวม Schema ทั้ง 4 ตาราง กรองข้อมูล 3 กฎ และบันทึกผลตรวจคุณภาพ 24 แถว"]
+        S5["Step 5: CheckDataQualityGate\nดึงจำนวนไฟล์ที่ผ่านเกณฑ์จาก dq_audit_log"]
+        S6{"Step 5b: EvaluateDqGate\nครบ 24 ไฟล์ และไม่มีไฟล์ที่ FAIL?"}
+        FAIL["PipelineFailedDqGate\nหยุดการทำงานทันที"]
+        S7["Step 6: PopulateCuratedDailyTable\nบันทึกข้อมูลสรุปรายวัน 728 แถวลง curated_daily_trips"]
+        S8["Step 7: BuildFinalAnalyticalAnswer\nสร้างตารางสรุปผลและจัดอันดับแท็กซี่ครึ่งแรกปี 2024"]
 
         S1 --> S2 --> S3 --> S4 --> S5 --> S6
-        S6 -- "Yes (PASS)" --> S7 --> S8
-        S6 -- "No (FAIL)" --> FAIL
+        S6 -- "ผ่านเกณฑ์" --> S7 --> S8
+        S6 -- "ไม่ผ่านเกณฑ์" --> FAIL
     end
 
     RAW --> S1
-    S4 --> ICE_DQ[("Apache Iceberg\nnyc_taxi_db.dq_audit_log\n(24 batch audit rows)")]
-    S7 --> ICE_CUR[("Apache Iceberg\nnyc_taxi_db.curated_daily_trips\n(728 daily rows)")]
-    S8 --> MART["Final Analytical Output & Evidence\nevidence/final_most_used_2024h1.csv"]
+    S4 --> ICE_DQ[("ตาราง Iceberg\nnyc_taxi_db.dq_audit_log")]
+    S7 --> ICE_CUR[("ตาราง Iceberg\nnyc_taxi_db.curated_daily_trips")]
+    S8 --> MART["ผลลัพธ์สุดท้ายและไฟล์หลักฐาน\nevidence/final_most_used_2024h1.csv"]
 ```
 
-### 2.3 Repository Structure
-
+### โครงสร้างไฟล์ใน Repository
 ```text
 Taxianalysis/
-├── template.yaml                      # CloudFormation stack: Glue DB, 4 Raw Tables, Step Functions State Machine
+├── template.yaml                      # CloudFormation สร้าง Glue Catalog และ Step Functions
 ├── scripts/
-│   ├── deploy_and_run.sh              # 1-command CloudShell deployment, ingestion, execution & evidence export
-│   ├── ingest_to_s3.sh                # Idempotent zero-disk CloudFront -> S3 streaming script
-│   └── export_evidence.sh             # Exports Step Functions JSON & Athena CSVs into evidence/
+│   ├── deploy_and_run.sh              # สคริปต์ติดตั้งและรัน Pipeline ทั้งระบบในคำสั่งเดียว
+│   ├── ingest_to_s3.sh                # สคริปต์สตรีมไฟล์ Parquet จาก CloudFront เข้า S3
+│   └── export_evidence.sh             # สคริปต์ดึงไฟล์หลักฐานการทำงานลงโฟลเดอร์ evidence
 ├── sql/
-│   ├── 01_ddl_iceberg_tables.sql      # Standalone DDL for partition repair & Iceberg tables
-│   ├── 02_dq_and_curated_load.sql     # Standalone DML for idempotent DELETE, DQ audit logging & curated load
-│   └── 03_final_analytics_mart.sql    # Standalone analytical query producing the H1 2024 ranking pivot
-├── evidence/
-│   ├── stepfunctions_execution.json   # Step Functions describe-execution status payload
-│   ├── dq_audit_results.csv           # Full 24-row export from nyc_taxi_db.dq_audit_log
-│   ├── curated_sample_data.csv        # Sample export from nyc_taxi_db.curated_daily_trips
-│   └── final_most_used_2024h1.csv     # Final H1 2024 ranking & monthly breakdown table
-├── submission1_baseline/
-│   └── submission1_duckdb_baseline.ipynb # Archived Submission 1 Baseline Notebook (DuckDB reference)
-└── README.md                          # Complete architecture, setup, results & design documentation
+│   ├── 01_ddl_iceberg_tables.sql      # คำสั่งสร้างตารางและลงทะเบียน Partition
+│   ├── 02_dq_and_curated_load.sql     # คำสั่งตรวจคุณภาพข้อมูลและโหลดข้อมูลเข้าตาราง Curated
+│   └── 03_final_analytics_mart.sql    # คำสั่งคำนวณผลลัพธ์และจัดอันดับแท็กซี่
+├── evidence/                          # ไฟล์หลักฐานการรันจริงจาก AWS และภาพหน้าจอ Console
+├── submission1_baseline/              # ไฟล์ Notebook ต้นแบบจาก Submission 1
+└── README.md                          # เอกสารอธิบายระบบ
 ```
 
 ---
 
-## 3. Step-by-Step Setup & Execution Guide
+## 3. วิธีติดตั้งและวิธีรันระบบ
 
-### 3.1 Prerequisites
-- **Environment**: AWS Academy Learner Lab (`us-east-1`) with an active lab session.
-- **IAM Role**: Uses the pre-created `LabRole` (`arn:aws:iam::<ACCOUNT_ID>:role/LabRole`), respecting the Learner Lab restriction where `iam:CreateRole` is denied.
-
-### 3.2 One-Command Deployment & Execution (AWS CloudShell)
-Open **AWS CloudShell** in `us-east-1` and run:
+### การรันทั้งระบบในคำสั่งเดียวบน AWS CloudShell
+เปิด AWS CloudShell ในโซน `us-east-1` แล้วรันคำสั่งต่อไปนี้
 
 ```bash
 git clone https://github.com/PhurinKaewpuangsek/Taxianalysis.git
@@ -113,162 +92,124 @@ chmod +x scripts/*.sh
 ./scripts/deploy_and_run.sh
 ```
 
-What `./scripts/deploy_and_run.sh` does automatically:
-1. Detects your AWS `ACCOUNT_ID` via STS and resolves `arn:aws:iam::<ACCOUNT_ID>:role/LabRole`.
-2. Creates the S3 bucket `s3://nyc-taxi-pipeline-${ACCOUNT_ID}` if it does not exist.
-3. Invokes `./scripts/ingest_to_s3.sh` to stream all 24 Parquet files directly from CloudFront into S3 (`raw/{taxi_type}/year_month={YYYY-MM}/`) without using CloudShell local disk.
-4. Deploys `template.yaml` via `aws cloudformation deploy` (creating `nyc_taxi_db`, `raw_yellow`, `raw_green`, `raw_fhv`, `raw_fhvhv`, and `NycTaxiReproduciblePipeline`).
-5. Starts a Step Functions execution, polls every 10 seconds until `SUCCEEDED`, and runs `./scripts/export_evidence.sh` to refresh all 4 files in `evidence/`.
+สคริปต์จะค้นหาเลขบัญชี AWS อัตโนมัติ สร้าง S3 Bucket สตรีมไฟล์ Parquet ทั้ง 24 ไฟล์เข้า S3 ติดตั้ง CloudFormation โดยใช้สิทธิ์ `LabRole` สั่งรัน Step Functions รอจนสถานะสำเร็จ และดึงไฟล์หลักฐานทั้งหมดลงโฟลเดอร์ `evidence/`
 
-### 3.3 Running Incremental Updates or Re-Runs
-- **Idempotent Re-Run (Same Window)**:
-  Re-running `./scripts/deploy_and_run.sh` skips already-uploaded S3 Parquet files (`[SKIP] Exists in S3`), executes `DELETE FROM` on the target window in both Apache Iceberg tables, re-verifies the 24-batch DQ gate, and reloads the curated table with **zero duplicate rows**.
-- **Ingesting New Months (e.g., July 2024)**:
-  ```bash
-  ./scripts/ingest_to_s3.sh "nyc-taxi-pipeline-$(aws sts get-caller-identity --query Account --output text)" 2024 "07"
-  ```
-- **Force Overwriting S3 Raw Files**:
-  ```bash
-  FORCE=true ./scripts/ingest_to_s3.sh
-  ```
+### การรันซ้ำหรืออัปเดตเมื่อมีข้อมูลเดือนใหม่
+หากต้องการรันซ้ำในเดือนเดิมสามารถรัน `./scripts/deploy_and_run.sh` ซ้ำได้ทันที สคริปต์จะข้ามไฟล์ที่มีใน S3 แล้ว และตาราง Iceberg จะลบเฉพาะข้อมูลช่วงเดือนเป้าหมายเดิมออกก่อนเขียนใหม่ ทำให้ไม่มีข้อมูลซ้ำ
+
+หากมีข้อมูลเดือนใหม่เช่นเดือนกรกฎาคม 2024 สามารถสั่งโหลดเพิ่มเข้า S3 ได้ด้วยคำสั่ง
+
+```bash
+./scripts/ingest_to_s3.sh "nyc-taxi-pipeline-$(aws sts get-caller-identity --query Account --output text)" 2024 "07"
+```
 
 ---
 
-## 4. Data Quality Framework & Evidence Summary
+## 4. การตรวจสอบคุณภาพข้อมูลและหลักฐานการทำงาน
 
-### 4.1 The 3 Cleaning Rules & Diagnostic Proof
-Every batch `(taxi_type, year_month)` is evaluated against three rules before entering `curated_daily_trips`:
-1. **Non-Null Pickup Timestamp**: `pickup_dt IS NOT NULL`
-2. **Strict Target-Month Boundary**: `pickup_dt >= month_start AND pickup_dt < next_month_start` (removes stray timestamps from adjacent years/months).
-3. **5-Key Deduplication**: `GROUP BY (taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id)`.
-   - **Why 5-Key Deduplication is Proven Safe Across All 24 Files**:
-     - **Pattern A (`yellow`, `green`, `fhvhv`)**: Full-row duplicate diagnostics in Submission 1 (Phase 7) proved `full_row_duplicates = 0` across all 18 files of these three fleets. Every 5-key collision is a payment charge/reversal pair (`+fare` and `-fare` with identical trip timestamps and locations), which must be collapsed into 1 physical trip.
-     - **Pattern B (`fhv`)**: `fhv` contains `721–2,526` exact full-row duplicates per month caused by dispatch log resubmissions. Deduplicating on the 5 keys removes these exact duplicates cleanly.
-4. **Automated DQ Gate Criteria**:
-   - Each batch is marked `dq_status = 'PASS'` in `nyc_taxi_db.dq_audit_log` if and only if `valid_deduped_count > 0` AND `removed_pct < 5.0%`.
-   - Step Functions (`EvaluateDqGate`) verifies `total_batches == "24"` and `failed_batches == "0"` before populating `curated_daily_trips`.
+### กฎการทำความสะอาดข้อมูล 3 ข้อ
+1. เวลาขึ้นรถต้องไม่เป็นค่าว่าง `pickup_dt IS NOT NULL`
+2. เวลาขึ้นรถต้องอยู่ในเดือนของไฟล์นั้นจริง `pickup_dt >= month_start AND pickup_dt < next_month_start`
+3. ตัดแถวซ้ำด้วยคีย์หลัก 5 ตัวคือ รหัสผู้ให้บริการ เวลาขึ้นรถ เวลาลงรถ โซนขึ้นรถ และโซนลงรถ ภายในแต่ละเดือน
 
-### 4.2 Summary of DQ Audit Log (`evidence/dq_audit_results.csv`)
+เกณฑ์การผ่าน Data Quality Gate คือทุกไฟล์ต้องมีจำนวนแถวที่ผ่านการกรองมากกว่า 0 และมีสัดส่วนแถวที่ถูกตัดออกน้อยกว่า 5 เปอร์เซ็นต์ หากครบทั้ง 24 ไฟล์และไม่มีไฟล์ใดตกเกณฑ์ Step Functions จึงจะอนุญาตให้โหลดข้อมูลเข้าตาราง `curated_daily_trips`
 
-| Taxi Type | Batches | Raw Rows (H1 2024) | Null Pickup | Out-of-Month | Bad Order (`dropoff < pickup`) | Valid Deduped Rows | Total Removed Rows | Removed % Range | DQ Status |
+### สรุปผลตรวจสอบคุณภาพข้อมูลจากตาราง `dq_audit_log`
+
+| ประเภทแท็กซี่ | จำนวนไฟล์ | จำนวนแถวดิบ | เวลาขึ้นรถว่าง | เวลาหลุดนอกเดือน | เวลาลงก่อนเวลาขึ้น | จำนวนแถวที่ผ่านเกณฑ์ | จำนวนแถวที่ถูกตัดออก | สัดส่วนที่ถูกตัดออก | สถานะ |
 | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: | :---: |
-| **`fhvhv`** | 6 / 6 | 120,864,668 | 0 | 0 | 0 | **120,864,438** | 230 | `0.0002%` | **PASS (6/6)** |
-| **`yellow`** | 6 / 6 | 20,332,093 | 0 | 149 | 300 | **20,105,833** | 226,260 | `1.0499% – 1.2128%` | **PASS (6/6)** |
-| **`fhv`** | 6 / 6 | 8,119,228 | 0 | 0 | 0 | **8,106,509** | 12,719 | `0.0769% – 0.2046%` | **PASS (6/6)** |
-| **`green`** | 6 / 6 | 339,807 | 0 | 44 | 0 | **338,596** | 1,211 | `0.3236% – 0.3860%` | **PASS (6/6)** |
-| **Total** | **24 / 24** | **149,655,796** | **0** | **193** | **300** | **149,415,376** | **240,420** | **`0.1606%` overall** | **PASS (24/24)** |
+| `fhvhv` | 6 | 120864668 | 0 | 0 | 0 | **120864438** | 230 | 0.0002% | PASS |
+| `yellow` | 6 | 20332093 | 0 | 149 | 300 | **20105833** | 226260 | 1.0499% ถึง 1.2128% | PASS |
+| `fhv` | 6 | 8119228 | 0 | 0 | 0 | **8106509** | 12719 | 0.0769% ถึง 0.2046% | PASS |
+| `green` | 6 | 339807 | 0 | 44 | 0 | **338596** | 1211 | 0.3236% ถึง 0.3860% | PASS |
+| **รวมทั้งหมด** | **24** | **149655796** | **0** | **193** | **300** | **149415376** | **240420** | **0.1606%** | **PASS 24/24** |
 
-### 4.3 Exported Evidence Artifacts & Live AWS Console Screenshots (`evidence/`)
+### ไฟล์หลักฐานการทำงานในโฟลเดอร์ `evidence/`
+1. [evidence/stepfunctions_execution.json](evidence/stepfunctions_execution.json) หลักฐานสถานะการทำงานของ Step Functions ที่รันสำเร็จ `SUCCEEDED`
+2. [evidence/dq_audit_results.csv](evidence/dq_audit_results.csv) ผลตรวจสอบคุณภาพข้อมูลครบทั้ง 24 ไฟล์จากตาราง `dq_audit_log`
+3. [evidence/curated_sample_data.csv](evidence/curated_sample_data.csv) ตัวอย่างชุดข้อมูลพร้อมใช้จากตาราง `curated_daily_trips` ซึ่งมีทั้งหมด 728 แถวจาก 182 วันคูณ 4 ประเภทแท็กซี่
+4. [evidence/final_most_used_2024h1.csv](evidence/final_most_used_2024h1.csv) ผลลัพธ์การจัดอันดับแท็กซี่ที่ถูกใช้งานมากที่สุดในช่วงครึ่งแรกของปี 2024
 
-#### Machine-Readable Evidence Files
-- [`evidence/stepfunctions_execution.json`](evidence/stepfunctions_execution.json): Full `aws stepfunctions describe-execution` JSON output proving `"status": "SUCCEEDED"` for execution `nyc-taxi-h1-2024-20261115-172638`.
-- [`evidence/dq_audit_results.csv`](evidence/dq_audit_results.csv): All 24 monthly audit rows exported from `nyc_taxi_db.dq_audit_log`.
-- [`evidence/curated_daily_trips` sample (`evidence/curated_sample_data.csv`)](evidence/curated_sample_data.csv): Sample daily aggregated records (`728` total rows = `182` days × `4` taxi types, including distinct pickup/dropoff zone counts).
-- [`evidence/final_most_used_2024h1.csv`](evidence/final_most_used_2024h1.csv): Final H1 2024 ranking and monthly pivot output.
+### ภาพหน้าจอหลักฐานการรันจริงจาก AWS Management Console
 
-#### Live AWS Management Console Screenshots (`Account: 3116-5174-6847`, `us-east-1`)
+#### 1. สถานะการรัน Step Functions สำเร็จครบทุกขั้นตอน
+![Step Functions Execution Details](evidence/screenshots/01_stepfunctions_execution_details.png)
 
-1. **Step Functions Execution Status & Step Table (`NycTaxiReproduciblePipeline` — `Succeeded`)**
-   ![Step Functions Execution Details](evidence/screenshots/01_stepfunctions_execution_details.png)
-   *(Full 93-event execution log screenshot also saved at [`evidence/screenshots/01b_stepfunctions_events_full.png`](evidence/screenshots/01b_stepfunctions_events_full.png))*
+#### 2. ผลลัพธ์คำตอบสุดท้ายบน Amazon Athena
+![Athena Final Most Used Result](evidence/screenshots/07_athena_final_most_used_result.png)
 
-2. **Athena Query Editor — Final Analytical Answer (`fhvhv = 120,864,438` Valid Trips)**
-   ![Athena Final Most Used Result](evidence/screenshots/07_athena_final_most_used_result.png)
+#### 3. ผลตรวจสอบคุณภาพข้อมูลทั้ง 24 ไฟล์บน Amazon Athena
+![Athena DQ Audit Log](evidence/screenshots/09_athena_dq_audit_log.png)
 
-3. **Athena Query Editor — 24-Batch Data Quality Audit Log (`dq_audit_log` — `24/24 PASS`)**
-   ![Athena DQ Audit Log](evidence/screenshots/09_athena_dq_audit_log.png)
+#### 4. ตัวอย่างชุดข้อมูลพร้อมใช้ `curated_daily_trips` บน Amazon Athena
+![Athena Curated Daily Trips](evidence/screenshots/08_athena_curated_daily_trips.png)
 
-4. **Athena Query Editor — Curated Daily Trips Dataset (`curated_daily_trips`)**
-   ![Athena Curated Daily Trips](evidence/screenshots/08_athena_curated_daily_trips.png)
+#### 5. ประวัติการรัน Query ของ Pipeline บน Amazon Athena
+![Athena Recent Queries](evidence/screenshots/06_athena_recent_queries.png)
 
-5. **Athena Query Execution History (`primary` Workgroup — All Pipeline Stages Completed)**
-   ![Athena Recent Queries](evidence/screenshots/06_athena_recent_queries.png)
+#### 6. โครงสร้างการจัดเก็บข้อมูลและ Partition บน Amazon S3
+![S3 Lakehouse Bucket](evidence/screenshots/02_s3_lakehouse_bucket.png)
+![S3 Raw Partitions](evidence/screenshots/03_s3_raw_partitions.png)
 
-6. **S3 Lakehouse Storage Layout (`s3://nyc-taxi-pipeline-311651746847`) & Hive Partitioning (`raw/fhvhv/year_month=YYYY-MM/`)**
-   ![S3 Lakehouse Bucket](evidence/screenshots/02_s3_lakehouse_bucket.png)
-   ![S3 Raw Partitions](evidence/screenshots/03_s3_raw_partitions.png)
-
-7. **Glue Data Catalog (`nyc_taxi_db` — 4 Raw External Parquet Tables + 2 Apache Iceberg Tables)**
-   ![Glue Data Catalog Tables](evidence/screenshots/04_glue_catalog_tables.png)
-
-8. **CloudFormation Stack (`nyc-taxi-pipeline-stack` — `CREATE_COMPLETE`)**
-   ![CloudFormation Stack](evidence/screenshots/05_cloudformation_stack.png)
+#### 7. ตารางทั้ง 6 ตารางใน AWS Glue Data Catalog และ CloudFormation Stack
+![Glue Data Catalog Tables](evidence/screenshots/04_glue_catalog_tables.png)
+![CloudFormation Stack](evidence/screenshots/05_cloudformation_stack.png)
 
 ---
 
-## 5. Final Analytical Result & Calendar-Effect Insights
+## 5. ผลการวิเคราะห์และคำตอบของโจทย์หลัก
 
-### 5.1 H1 2024 Valid Trip Counts by Taxi Type (`evidence/final_most_used_2024h1.csv`)
+### ตารางสรุปจำนวนเที่ยวการเดินทางที่สมบูรณ์ในช่วงครึ่งแรกของปี 2024
 
-| Rank | Taxi Type | Jan 2024 | Feb 2024 | Mar 2024 | Apr 2024 | May 2024 | Jun 2024 | Total H1 2024 Valid Trips | Avg Daily Trips (182 Days) | Share of Total (%) |
+| อันดับ | ประเภทแท็กซี่ | ม.ค. 2024 | ก.พ. 2024 | มี.ค. 2024 | เม.ย. 2024 | พ.ค. 2024 | มิ.ย. 2024 | รวม 6 เดือน | เฉลี่ยต่อวัน | สัดส่วนตลาด |
 | :---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **1** | **`fhvhv`** | 19,663,892 | 19,359,106 | 21,280,755 | 19,733,002 | 20,704,501 | 20,123,182 | **120,864,438** | **664,090** | **80.89%** |
-| **2** | **`yellow`** | 2,933,498 | 2,975,879 | 3,543,701 | 3,475,892 | 3,680,592 | 3,496,271 | **20,105,833** | **110,472** | **13.46%** |
-| **3** | **`fhv`** | 1,287,477 | 1,175,188 | 1,467,947 | 1,441,976 | 1,349,878 | 1,384,043 | **8,106,509** | **44,541** | **5.43%** |
-| **4** | **`green`** | 56,368 | 53,399 | 57,252 | 56,253 | 60,769 | 54,555 | **338,596** | **1,860** | **0.23%** |
-| — | **All Taxis** | **23,941,235** | **23,563,572** | **26,349,655** | **24,707,123** | **25,795,740** | **25,058,051** | **149,415,376** | **820,964** | **100.00%** |
+| **1** | **`fhvhv`** | 19663892 | 19359106 | 21280755 | 19733002 | 20704501 | 20123182 | **120864438** | **664090** | **80.89%** |
+| **2** | **`yellow`** | 2933498 | 2975879 | 3543701 | 3475892 | 3680592 | 3496271 | **20105833** | **110472** | **13.46%** |
+| **3** | **`fhv`** | 1287477 | 1175188 | 1467947 | 1441976 | 1349878 | 1384043 | **8106509** | **44541** | **5.43%** |
+| **4** | **`green`** | 56368 | 53399 | 57252 | 56253 | 60769 | 54555 | **338596** | **1860** | **0.23%** |
+| **รวม** | **ทุกประเภท** | **23941235** | **23563572** | **26349655** | **24707123** | **25795740** | **25058051** | **149415376** | **820964** | **100.00%** |
 
-**Conclusion**: **High-Volume For-Hire Vehicles (`fhvhv`)** was the most used taxi type in the first half of 2024 with **120,864,438 valid trips** (**80.89%** of all NYC trips)—more than **6× higher** than second-place `yellow` (`20,105,833`). Because total rows removed by cleaning across all fleets is `< 1.22%`, no variation in cleaning thresholds could alter the winner.
+**สรุปคำตอบ** แท็กซี่ประเภท **`fhvhv`** ถูกใช้งานมากที่สุดในช่วงครึ่งแรกของปี 2024 โดยมีจำนวนเที่ยวการเดินทางที่สมบูรณ์รวม **120864438 เที่ยว** คิดเป็น **80.89%** ของการเดินทางทั้งหมด และมากกว่าอันดับสองคือ `yellow` เกือบ 6 เท่า
 
-### 5.2 Calendar-Effect Normalization (Daily Average Trips/Day by Month)
-Because `curated_daily_trips` stores data at `pickup_date` granularity (`182` days across H1 2024), normalizing monthly totals by the number of calendar days in each month (`Jan=31, Feb=29 [leap year], Mar=31, Apr=30, May=31, Jun=30`) explains the apparent February dip and March spike:
-
-| Taxi Type | Jan (31d) | Feb (29d) | Mar (31d) | Apr (30d) | May (31d) | Jun (30d) | H1 Trend Interpretation |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| **`fhvhv`** | 634,319/d | 667,555/d | 686,476/d | 657,767/d | 667,887/d | 670,773/d | **Flat high-volume plateau** (~634K–686K/day); raw Feb dip was purely due to 29 calendar days. |
-| **`yellow`** | 94,629/d | 102,617/d | 114,313/d | 115,863/d | 118,729/d | 116,542/d | **Real demand growth (+25.5%)** from Jan (`94.6K/d`) to May (`118.7K/d`) even after removing calendar effects. |
-| **`fhv`** | 41,532/d | 40,524/d | 47,353/d | 48,066/d | 43,544/d | 46,135/d | Moderate seasonal fluctuation (`40.5K–48.1K/d`). |
-| **`green`** | 1,818/d | 1,841/d | 1,847/d | 1,875/d | 1,960/d | 1,819/d | **Flat baseline** (`1,818–1,960/d`). |
+เมื่อนำข้อมูลรายวันจากตาราง `curated_daily_trips` มาหาค่าเฉลี่ยต่อวันในแต่ละเดือน พบว่าการที่ยอดรวมเดือนกุมภาพันธ์ลดลงในทุกประเภทเกิดจากจำนวนวันในเดือนกุมภาพันธ์มีเพียง 29 วัน เมื่อคิดเป็นค่าเฉลี่ยต่อวันแล้ว `fhvhv` มีการใช้งานคงที่ประมาณ 634000 ถึง 686000 เที่ยวต่อวัน ส่วน `yellow` มีแนวโน้มการใช้งานเพิ่มขึ้นจริงประมาณ 25 เปอร์เซ็นต์จาก 94629 เที่ยวต่อวันในเดือนมกราคมเป็น 118729 เที่ยวต่อวันในเดือนพฤษภาคม
 
 ---
 
-## 6. Key Pipeline Design Decisions & Rationale
+## 6. การตัดสินใจสำคัญในการออกแบบ Pipeline
 
-### Decision 1: Schema Harmonization, Case-Insensitive Parquet Resolution & Null-Safe 5-Key Deduplication at the Lakehouse Boundary
-- **Problem**: The 24 raw NYC TLC Parquet files suffer from three physical incompatibilities:
-  1. Column name casing varies (`dropOff_datetime` and `PUlocationID`/`DOlocationID` in `fhv` vs. `dropoff_datetime` and `PULocationID`/`DOLocationID` in `fhvhv`/`yellow`/`green`).
-  2. Integer bit-widths drift across months between `INT32` (`int`) and `INT64` (`bigint`) for `VendorID`, `PULocationID`, and `DOLocationID`, causing `HIVE_BAD_DATA` errors in Athena if typed as `int`.
-  3. `fhv` frequently contains `NULL` in `PUlocationID` and `DOlocationID`; using `COUNT(DISTINCT col1, col2, ...)` in SQL silently drops any row where a column is `NULL`.
-- **Decision**:
-  1. Set `"parquet.column.index.access": "false"` on all 4 Glue raw tables (`template.yaml`) so Athena resolves Parquet columns by name case-insensitively.
-  2. Define `vendorid`, `pulocationid`, and `dolocationid` as `bigint` in the Glue catalog so Athena widens `INT32` to `BIGINT` without schema errors.
-  3. Harmonize all 4 tables via `UNION ALL` and deduplicate using `GROUP BY (taxi_type, year_month, provider_id, pickup_dt, dropoff_dt, pu_id, do_id)` after filtering for valid in-month timestamps.
-- **Rationale**: In Trino/Athena, `GROUP BY` treats `NULL` values as equal group keys (matching DuckDB's `SELECT DISTINCT ON (...)` semantics from Submission 1) and enables distributed partial hash aggregation across worker nodes before shuffling, reproducing all 24 monthly ground-truth counts to the exact single trip.
+### การตัดสินใจที่ 1 การปรับโครงสร้าง Schema ให้เป็นมาตรฐานเดียวกันและการตัดข้อมูลซ้ำด้วย `GROUP BY`
+ไฟล์ Parquet ทั้ง 4 ประเภทมีชื่อคอลัมน์ตัวพิมพ์ใหญ่เล็กไม่ตรงกัน เช่น `dropOff_datetime` และ `PUlocationID` ใน `fhv` รวมถึงชนิดตัวเลขในแต่ละเดือนสลับกันระหว่าง `INT32` และ `INT64` เราจึงตั้งค่า `parquet.column.index.access = false` ใน Glue Catalog เพื่อให้จับคู่คอลัมน์โดยไม่สนใจตัวพิมพ์ใหญ่เล็ก และกำหนดคอลัมน์รหัสเป็น `bigint` ทั้งหมดเพื่อป้องกันข้อผิดพลาดขณะอ่านไฟล์ นอกจากนี้ในการตัดแถวซ้ำด้วยคีย์ 5 ตัว เราเลือกใช้ `GROUP BY` แทน `COUNT(DISTINCT)` เพราะข้อมูล `fhv` มีค่าว่างในคอลัมน์โซนขึ้นและลงรถจำนวนมาก การใช้ `GROUP BY` จะรักษาแถวที่มีค่าว่างไว้ได้ถูกต้องตรงกับผลลัพธ์ต้นแบบใน Submission 1 ทุกแถว
 
-### Decision 2: Idempotent Apache Iceberg `DELETE + INSERT` Guarded by a Step Functions `Choice` Data Quality Gate
-- **Problem**: Standard Hive external tables append duplicate files when an `INSERT INTO` query is re-run, and un-gated pipelines can overwrite downstream analytics tables with corrupted or partial loads.
-- **Decision**: Store both `dq_audit_log` and `curated_daily_trips` as **Apache Iceberg** tables (`'table_type' = 'ICEBERG'`). At the start of each run (`DeleteExistingTargetWindowForIdempotency`), execute an ACID `DELETE FROM ... WHERE year_month BETWEEN '2024-01' AND '2024-06'`, compute batch DQ metrics into `dq_audit_log`, and evaluate `EvaluateDqGate` (`total_batches == "24"` and `failed_batches == "0"`) before allowing `PopulateCuratedDailyTable` to run.
-- **Rationale**: Iceberg ACID transactions guarantee that re-running the pipeline N times produces the exact same 24 audit rows and 728 curated daily rows (zero duplicate accumulation), while the Step Functions `Choice` gate halts execution immediately (`PipelineFailedDqGate`) if any file is missing or exceeds the 5.0% anomaly threshold.
+### การตัดสินใจที่ 2 การใช้ตาราง Apache Iceberg ร่วมกับ Data Quality Gate บน Step Functions
+เพื่อให้ Pipeline รันซ้ำได้โดยไม่เกิดข้อมูลซ้ำซ้อน เราเลือกสร้างตาราง `dq_audit_log` และ `curated_daily_trips` เป็น Apache Iceberg ที่รองรับคำสั่ง `DELETE` ก่อนเริ่มคำนวณทุกครั้งระบบจะลบข้อมูลเฉพาะช่วงเดือนเป้าหมายเดิมออกก่อนเสมอ และคั่นกลางด้วยสถานะ `EvaluateDqGate` ใน Step Functions เพื่อตรวจสอบว่าข้อมูลทั้ง 24 ไฟล์ผ่านเกณฑ์คุณภาพครบทั้งหมดก่อนจึงจะบันทึกเข้าสู่ตาราง Curated
 
-### Decision 3: Zero-Disk CloudFront-to-S3 Streaming Ingestion (`curl | aws s3 cp -`)
-- **Problem**: AWS CloudShell enforces a strict **1 GB persistent home directory limit**, whereas the 24 Parquet files total **~3.2 GB**. Downloading files locally before uploading would crash CloudShell with `No space left on device`.
-- **Decision**: Stream bytes directly from CloudFront into S3 multipart upload buffers in `scripts/ingest_to_s3.sh` (`curl --retry 3 -sSL --fail "${source_url}" | aws s3 cp - "${s3_uri}"`), guarded by an `aws s3api head-object` check.
-- **Rationale**: Uses zero local disk space, survives transient network drops via retries, and completes subsequent runs in seconds by skipping existing S3 objects unless `FORCE=true`.
+### การตัดสินใจที่ 3 การสตรีมข้อมูลจาก CloudFront เข้า S3 โดยตรง
+เนื่องจากสภาพแวดล้อม AWS CloudShell จำกัดพื้นที่ดิสก์เพียง 1 GB ซึ่งไม่พอเก็บไฟล์ Parquet ขนาด 3.2 GB เราจึงออกแบบสคริปต์ `ingest_to_s3.sh` ให้ใช้ท่อคำสั่ง `curl | aws s3 cp -` เพื่อส่งข้อมูลจากต้นทางเข้า S3 โดยตรงโดยไม่เขียนลงดิสก์ และเช็คไฟล์ที่มีอยู่แล้วด้วย `head-object` เพื่อไม่ต้องอัปโหลดซ้ำในการรันครั้งถัดไป
 
 ---
 
-## 7. Comparison: How Submission 2 Improves Upon Submission 1 Baseline
+## 7. การเปรียบเทียบการพัฒนาจาก Submission 1 สู่ Submission 2
 
-| Dimension | Submission 1 Baseline (`submission1_baseline/submission1_duckdb_baseline.ipynb`) | Submission 2 Reproducible Pipeline (AWS Lakehouse) |
+| หัวข้อเปรียบเทียบ | Submission 1 Baseline | Submission 2 Reproducible Pipeline |
 | :--- | :--- | :--- |
-| **Execution Model** | Manual cell-by-cell execution in Google Colab. | Automated 7-stage **AWS Step Functions** state machine (`NycTaxiReproduciblePipeline`) deployed via 1 command. |
-| **Data Ingestion & Storage** | Ephemeral local disk (`/content/data/nyc_taxi_2024`) wiped whenever Colab disconnects; fails on <1 GB environments. | Durable, Hive-partitioned **Amazon S3 Raw Zone** (`year_month=YYYY-MM`) populated via zero-disk CloudFront-to-S3 streaming. |
-| **Schema Integration** | Python dictionary loop (`TAXI_CONFIG`) running 24 separate single-file DuckDB queries. | Unified **AWS Glue Data Catalog** (`nyc_taxi_db`) with case-insensitive Parquet SerDe + harmonized distributed **Athena `UNION ALL`** SQL. |
-| **Curated Output Layer** | In-memory Pandas `summary_df` (24 monthly numbers only; no persistent curated dataset). | Persistent **Apache Iceberg** table (`curated_daily_trips`, 728 daily rows with distinct pickup/dropoff zone coverage) ready for downstream BI/analytics. |
-| **Reproducibility & Idempotency** | Re-running requires re-downloading 3.2 GB and re-executing notebook cells manually. | Infrastructure-as-Code (`template.yaml`), `head-object` ingestion skip, and ACID Iceberg `DELETE + INSERT` window replacement. |
-| **Data Quality Enforcement** | Post-hoc Python `assert` statements after all 24 files finished processing. | Pre-load **`dq_audit_log` Iceberg table** + Step Functions **`EvaluateDqGate` Choice state** that blocks curated table loads if any batch fails DQ rules. |
+| **รูปแบบการรันงาน** | รันทีละเซลล์ด้วยมือบน Google Colab | รันอัตโนมัติทั้งระบบผ่าน AWS Step Functions ด้วยคำสั่งเดียว |
+| **การจัดเก็บข้อมูล** | โหลดลงดิสก์ชั่วคราวของ Colab ข้อมูลหายเมื่อปิดเซสชัน | จัดเก็บถาวรบน Amazon S3 แยก Partition ตามประเภทและเดือน |
+| **การจัดการข้อมูลต่างโครงสร้าง** | ใช้ Python วนลูปคิวรีทีละไฟล์แยกกัน 24 รอบ | ลงทะเบียนใน AWS Glue Catalog และรวมทุกตารางด้วย SQL `UNION ALL` บน Athena |
+| **ชุดข้อมูล Curated Output** | ได้เฉพาะตัวเลขสรุปในหน่วยความจำ ไม่มีตารางข้อมูลเก็บไว้ใช้ต่อ | สร้างตาราง Apache Iceberg `curated_daily_trips` เก็บข้อมูลสรุปรายวันและจำนวนโซนพร้อมใช้งานต่อทันที |
+| **การรันซ้ำและการอัปเดตข้อมูล** | ต้องโหลดไฟล์และรันโค้ดใหม่ทั้งหมดด้วยตัวเอง | ข้ามไฟล์ที่มีแล้วใน S3 อัตโนมัติ และใช้คำสั่ง `DELETE` ตามด้วย `INSERT` บนตาราง Iceberg เพื่อรันซ้ำได้โดยข้อมูลไม่ซ้ำ |
+| **การตรวจสอบคุณภาพข้อมูล** | เช็คด้วยคำสั่ง `assert` หลังคำนวณเสร็จทั้งหมดแล้ว | บันทึกผลลงตาราง `dq_audit_log` และใช้ Step Functions กั้นไม่ให้ข้อมูลเสียเข้าสู่ตาราง Curated |
 
 ---
 
-## 8. Current Pipeline Limitations
+## 8. ข้อจำกัดของ Pipeline ปัจจุบัน
 
-1. **AWS Academy Learner Lab IAM & Session Constraints**: Because `iam:CreateRole` is restricted in Learner Lab, all services share the broad `LabRole` rather than least-privilege per-service IAM roles, and the lab session pauses after the 4-hour Learner Lab timer expires.
-2. **Batch Window Parameterization in Step Functions SQL**: While `scripts/ingest_to_s3.sh` accepts dynamic `YEAR` and `MONTHS` arguments, the SQL queries inside `template.yaml` currently target the `2024-01` to `2024-06` window (`WHERE year_month BETWEEN '2024-01' AND '2024-06'`). Supporting arbitrary dynamic windows in Step Functions would require passing `$.start_month` and `$.end_month` via `States.Format` in the ASL definition.
-3. **5-Key Deduplication Scope at Month Boundaries**: Deduplication is scoped within each `year_month` partition (after filtering `pickup_dt` to that month) to match the Submission 1 baseline; a trip dispatched at `23:59:59` on the last day of a month whose duplicate record was somehow logged in the next month's file would already be filtered out by the target-month timestamp rule.
-4. **No Real-Time Streaming Trigger**: Ingestion is triggered via CLI (`deploy_and_run.sh`) rather than an automated EventBridge schedule because NYC TLC publishes monthly Parquet batches on an irregular ~2-month delay.
+1. ข้อจำกัดด้านสิทธิ์ของ AWS Academy Learner Lab ที่ไม่อนุญาตให้สร้าง IAM Role ใหม่ ทำให้ทุกบริการต้องใช้ `LabRole` ร่วมกัน และเซสชันมีเวลาจำกัดตามรอบของห้องปฏิบัติการ
+2. คำสั่ง SQL ใน Step Functions กำหนดช่วงเดือนเป้าหมายเป็นครึ่งแรกของปี 2024 หากต้องการเปลี่ยนช่วงเดือนแบบไดนามิกต้องส่งพารามิเตอร์ช่วงเดือนผ่าน Input ของ Step Functions เพิ่มเติม
+3. การตัดข้อมูลซ้ำทำงานภายในขอบเขตของแต่ละไฟล์รายเดือนตามนิยามของ Baseline
+4. การดึงข้อมูลจากต้นทางเริ่มต้นด้วยการสั่งรันสคริปต์ผ่าน CLI ยังไม่ได้ตั้งเวลาดึงอัตโนมัติรายเดือนเนื่องจาก NYC TLC อัปเดตไฟล์ข้อมูลล่าช้าไม่ตรงวันกันในแต่ละเดือน
 
 ---
 
 ## 9. Learning Reflection
 
-การพัฒนางานจาก Notebook ใน Submission 1 มาเป็น Reproducible Data Pipeline บน AWS ใน Submission 2 ทำให้เข้าใจความแตกต่างระหว่างการวิเคราะห์ข้อมูลแบบเฉพาะกิจ (Ad-hoc Analysis) กับการออกแบบระบบวิศวกรรมข้อมูลที่รันซ้ำได้ในระดับ Production อย่างชัดเจน โดยเฉพาะการจัดการความแตกต่างของ Schema ทั้ง 4 ประเภทแท็กซี่ตั้งแต่ชั้น Glue Data Catalog (`parquet.column.index.access = false` และการใช้ `BIGINT` รองรับทั้ง `INT32`/`INT64`) และการเขียน SQL เชิงกระจายบน Athena ที่ต้องระวังเรื่อง `NULL` ในคีย์ที่ใช้ตัดข้อมูลซ้ำให้ได้ผลลัพธ์ตรงกับ DuckDB ทุกแถว นอกจากนี้ การใช้ตาราง Apache Iceberg ร่วมกับ Step Functions Choice State ในการทำ Data Quality Gate ก่อนบันทึกข้อมูลลงชั้น Curated ช่วยให้มั่นใจได้ว่าการรัน Pipeline ซ้ำทุกครั้งจะมีความเป็น Idempotent ไม่มีข้อมูลซ้ำซ้อน และตรวจสอบย้อนกลับได้ครบทุกขั้นตอน อีกทั้งข้อจำกัดด้านพื้นที่จัดเก็บ 1 GB ของ AWS CloudShell ยังสอนให้รู้จักออกแบบกระบวนการ Ingestion แบบ Streaming (`curl | aws s3 cp -`) ที่แก้ปัญหาคอขวดของทรัพยากรได้อย่างมีประสิทธิภาพ
+การพัฒนางานจาก Notebook ใน Submission 1 มาเป็น Reproducible Data Pipeline บน AWS ใน Submission 2 ทำให้เข้าใจความแตกต่างระหว่างการวิเคราะห์ข้อมูลแบบเฉพาะกิจกับการออกแบบระบบวิศวกรรมข้อมูลที่รันซ้ำได้จริงอย่างชัดเจน โดยเฉพาะการแก้ปัญหาโครงสร้างไฟล์ Parquet ทั้ง 4 ประเภทที่มีชื่อคอลัมน์และชนิดตัวเลขต่างกันตั้งแต่ชั้น Glue Data Catalog และการเขียน SQL บน Athena ให้จัดการค่าว่างในคีย์ตัดข้อมูลซ้ำได้ตรงกับ DuckDB ทุกแถว นอกจากนี้การใช้ตาราง Apache Iceberg ร่วมกับ Step Functions ในการทำ Data Quality Gate ก่อนบันทึกข้อมูลลงชั้น Curated ช่วยให้มั่นใจได้ว่าการรันระบบซ้ำทุกครั้งจะไม่มีข้อมูลซ้ำซ้อนและตรวจสอบย้อนกลับได้ครบทุกขั้นตอน อีกทั้งข้อจำกัดพื้นที่ดิสก์ 1 GB ของ AWS CloudShell ยังช่วยให้ได้เรียนรู้วิธีออกแบบกระบวนการสตรีมข้อมูลเข้า S3 โดยตรงที่แก้ปัญหาคอขวดของทรัพยากรได้อย่างมีประสิทธิภาพ
