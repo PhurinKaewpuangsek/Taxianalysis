@@ -35,6 +35,8 @@
 
 ### แผนภาพการทำงานของ Pipeline
 
+![Pipeline Architecture Diagram](TaxiAnalysisdiagram1.drawio.png)
+
 ```mermaid
 flowchart TD
     CF["แหล่งข้อมูลสาธารณะ NYC TLC\nไฟล์ Parquet 24 ไฟล์"] -->|"scripts/ingest_to_s3.sh\ncurl ส่งตรงเข้า S3 ไม่ผ่านดิสก์"| RAW["S3 Raw Zone\nraw/taxi_type/year_month=YYYY-MM/"]
